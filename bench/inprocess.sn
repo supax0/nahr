@@ -1,0 +1,171 @@
+// In-process benchmark: Nahr's own cost per request, without sockets.
+// Each scenario runs the router through the test client for a fixed number of
+// requests on one thread and prints ns/request, requests/ms, and the
+// allocations and requested bytes per request (std's per-thread counters).
+//
+//   (cd sultanc && ./build/sultanc "$OLDPWD/nahr/bench/inprocess.sn" -o "$OLDPWD/nahr_inprocess")
+//   ./nahr_inprocess
+from std.io import println;
+from std.text import join, uint_to_text, repeat_text;
+from std.time import monotonic_time_ns;
+from std.os import thread_free_count, thread_requested_bytes;
+from nahr.routing import router, new_router, get, post, layer, middleware, routing_error;
+from nahr.handler import request, from_fn, with_extractor, with_extractors;
+from nahr.extract import extractor, path_params, extract_path_uint, extract_query, text_body;
+from nahr.response import response;
+from nahr.body import text_response;
+from nahr.json import json_writer, json_begin_object, json_end_object, json_string_field, json_int_field, json_response_with;
+from nahr.middleware import json_errors, request_id, rate_limit, global_key, rate_limit_key, compression;
+from nahr.testing import dispatch_test, test_request, test_request_header, test_request_text, response_status;
+
+def plain(state: &int, req: &request, params: &path_params): response {
+    let body: string = "ok";
+    return text_response(200, &body);
+}
+
+type item = { name: string, id: int };
+
+def encode_item(value: &item, out: &mutable json_writer): void {
+    let name: string = "name";
+    let id: string = "id";
+    json_begin_object(out);
+    json_string_field(out, &name, &(*value).name);
+    json_int_field(out, &id, (*value).id);
+    json_end_object(out);
+}
+
+def json(state: &int, req: &request, params: &path_params): response {
+    let value: item = { name: "nahr", id: 42 };
+    return json_response_with(200, &value, encode_item);
+}
+
+def params(state: &int, id: uint, q: option string): response {
+    let body: string = uint_to_text(id);
+    return text_response(200, &body);
+}
+
+def echo(state: &int, body: string): response {
+    return text_response(200, &body);
+}
+
+def large(state: &int, req: &request, params: &path_params): response {
+    let unit: string = "0123456789abcdef";
+    let body: string = repeat_text(&unit, 4096);
+    return text_response(200, &body);
+}
+
+def now(): int {
+    match monotonic_time_ns() with
+    | result.ok(t) -> { return t; }
+    | result.err(_) -> { return 0; };
+}
+
+def ok(registered: result uint, routing_error): bool {
+    match registered with
+    | result.ok(_) -> { return true; }
+    | result.err(_) -> { return false; };
+}
+
+def build(with_middleware: bool): router<int> {
+    let app: mutable router<int> = new_router(0);
+    let id_key: string = "id";
+    let q_key: string = "q";
+    let id: extractor<int, uint> = extract_path_uint(&id_key);
+    let q: extractor<int, option string> = extract_query(&q_key);
+    let body: extractor<int, string> = text_body();
+    let paths: vector string = ["/plain", "/json", "/params/{id}", "/echo", "/large"];
+    let a: bool = ok(get(&mutable app, &paths[0], from_fn(plain)));
+    let b: bool = ok(get(&mutable app, &paths[1], from_fn(json)));
+    let c: bool = ok(get(&mutable app, &paths[2], with_extractors(id, q, params)));
+    let d: bool = ok(post(&mutable app, &paths[3], with_extractor(body, echo)));
+    let e: bool = ok(get(&mutable app, &paths[4], from_fn(large)));
+    if (with_middleware) {
+        let errors: middleware<int> = json_errors();
+        let ids: middleware<int> = request_id();
+        let key: rate_limit_key<int> = global_key();
+        let limit: middleware<int> = rate_limit(1000000000, 60, key);
+        let gzip: middleware<int> = compression(1024);
+        layer(&mutable app, errors);
+        layer(&mutable app, ids);
+        layer(&mutable app, limit);
+        layer(&mutable app, gzip);
+    };
+    return app;
+}
+
+// Runs `count` requests and prints one table row.
+def run(app: &router<int>, label: string, req: &request, count: uint): void {
+    let warm: mutable uint = 0;
+    while (warm < count / 10) { let r: response = dispatch_test(app, req); warm := warm + 1; }
+    let failures: mutable uint = 0;
+    // std's allocation counter stays 0 on the main thread (reported); in a
+    // steady state every allocation is freed, so frees count them.
+    let allocations_before: u64 = thread_free_count();
+    let bytes_before: u64 = thread_requested_bytes();
+    let start: int = now();
+    let i: mutable uint = 0;
+    while (i < count) {
+        let r: response = dispatch_test(app, req);
+        if (response_status(&r) >= 400) { failures := failures + 1; };
+        i := i + 1;
+    }
+    let elapsed: int = now() - start;
+    let allocations: uint = ((thread_free_count() - allocations_before) as uint) / count;
+    let bytes: uint = ((thread_requested_bytes() - bytes_before) as uint) / count;
+    let per: uint = (elapsed as uint) / count;
+    let rate: mutable uint = 0;
+    if (per > 0) { rate := 1000000 / per; };
+    let cells: vector string = [
+        "| ", label, " | ", uint_to_text(count), " | ", uint_to_text(per),
+        " | ", uint_to_text(rate), " | ", uint_to_text(allocations), " | ", uint_to_text(bytes),
+        " | ", uint_to_text(failures), " |"
+    ];
+    let none: string = "";
+    println(join(&cells, &none));
+}
+
+def request_for(method: string, target: string): request {
+    return test_request(&method, &target);
+}
+
+def main(): int {
+    let count: uint = 50000;
+    println("| scenario | requests | ns/request | requests/ms (1 thread) | allocations/request | bytes/request | 4xx/5xx |");
+    println("|---|---|---|---|---|---|---|");
+    let i: mutable uint = 0;
+    while (i < 2) {
+        let with_mw: bool = i == 1;
+        let app: router<int> = build(with_mw);
+        let suffix: mutable string = "";
+        if (with_mw) { suffix := " +middleware"; };
+        let tags: vector string = ["GET /plain", "GET /json", "GET /params/7?q=a", "POST /echo", "GET /large (64 KiB)", "GET /missing (404)"];
+        let plain_req: request = request_for("GET", "/plain");
+        let json_req: request = request_for("GET", "/json");
+        let params_req: request = request_for("GET", "/params/7?q=a");
+        let echo_req: mutable request = request_for("POST", "/echo");
+        let text: string = "hello nahr";
+        test_request_text(&mutable echo_req, &text);
+        let ct: string = "content-type";
+        let plain_type: string = "text/plain";
+        let ignored: bool = test_request_header(&mutable echo_req, &ct, &plain_type);
+        let large_req: mutable request = request_for("GET", "/large");
+        let ae: string = "accept-encoding";
+        let gz: string = "gzip";
+        let ignored2: bool = test_request_header(&mutable large_req, &ae, &gz);
+        let missing_req: request = request_for("GET", "/missing");
+        run(&app, concat(&tags[0], &suffix), &plain_req, count);
+        run(&app, concat(&tags[1], &suffix), &json_req, count);
+        run(&app, concat(&tags[2], &suffix), &params_req, count);
+        run(&app, concat(&tags[3], &suffix), &echo_req, count);
+        run(&app, concat(&tags[4], &suffix), &large_req, count / 50);
+        run(&app, concat(&tags[5], &suffix), &missing_req, count);
+        i := i + 1;
+    }
+    return 0;
+}
+
+def concat(a: &string, b: &string): string {
+    let parts: vector string = [clone(a), clone(b)];
+    let none: string = "";
+    return join(&parts, &none);
+}

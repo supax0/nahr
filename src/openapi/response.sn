@@ -1,0 +1,253 @@
+استورد openapi.model;
+استورد openapi.serialize;
+استورد handler.adapter;
+استورد extract.path;
+استورد body.message;
+استورد response.headers;
+استورد middleware.chain;
+استورد std.text.transform;
+استورد std.text.from_bytes;
+
+عام عرف رد_مخطط_واجهة(
+    الوثيقة: &وثيقة_واجهة
+): استجابة {
+    طابق واجهة_إلى_جسون(الوثيقة) مع
+    | نتيجة.خطأ(_) -> {
+        دع الرسالة: نص = «OpenAPI document serialization failed»;
+        أرجع رد_نصي(500, &الرسالة);
+    }
+    | نتيجة.نجح(النص) -> {
+        دع الاستجابة: متغير استجابة = رد_نصي(200, &النص);
+        دع النوع: نص = «application/json; charset=utf-8»;
+        دع تجاهل: منطقي = عين_نوع_المحتوى(
+            &متغير الاستجابة,
+            &النوع
+        );
+        أرجع الاستجابة;
+    };
+}
+
+عرف قالب_صفحة_التوثيق(): نص {
+    أرجع «<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="nahr-openapi" content="@@NAHR_OPENAPI_URL@@">
+<title>Nahr API</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --text: #1f2328;
+  --muted: #59636e;
+  --line: #d1d9e0;
+  --code: #f6f8fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --text: #e6edf3; --muted: #9198a1; --line: #3d444d; --code: #151b23; }
+}
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  margin: 0;
+  color: var(--text);
+  background: Canvas;
+}
+main { max-width: 960px; margin: auto; padding: 32px 16px; }
+h1 { margin: 0 0 4px; font-size: 1.6rem; }
+.muted { color: var(--muted); }
+.route {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 4px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.method { font-weight: 600; font-size: 0.85rem; }
+.path { font-family: ui-monospace, monospace; }
+.route .muted { grid-column: 2; }
+pre {
+  white-space: pre-wrap;
+  background: var(--code);
+  padding: 12px;
+  overflow: auto;
+}
+</style>
+</head>
+<body>
+<main>
+<h1 id="title">Nahr API</h1>
+<p id="meta" class="muted"></p>
+<div id="routes"></div>
+
+<details>
+<summary>OpenAPI JSON</summary>
+<pre id="raw"></pre>
+</details>
+</main>
+<script>
+function renderRoute(root, method, path, operation) {
+  const row = document.createElement('div');
+  const summary = operation.summary || operation.description || '';
+  row.className = 'route';
+  row.innerHTML =
+    '<span class="method">' + method.toUpperCase() + '</span>' +
+    '<span class="path"></span><div class="muted"></div>';
+  row.querySelector('.path').textContent = path;
+  row.querySelector('.muted').textContent = summary;
+  root.appendChild(row);
+}
+const specUrl = document.querySelector('meta[name="nahr-openapi"]').content;
+fetch(specUrl)
+  .then(response => response.json())
+  .then(api => {
+    document.getElementById('title').textContent = api.info.title;
+    document.getElementById('meta').textContent =
+      'Version ' + api.info.version + ' · OpenAPI ' + api.openapi;
+    const root = document.getElementById('routes');
+    for (const [path, item] of Object.entries(api.paths || {})) {
+      for (const [method, operation] of Object.entries(item)) {
+        if (method === 'additionalOperations') {
+          for (const [extra, extraOperation] of Object.entries(operation)) {
+            renderRoute(root, extra, path, extraOperation);
+          }
+        } else {
+          renderRoute(root, method, path, operation);
+        }
+      }
+    }
+    document.getElementById('raw').textContent =
+      JSON.stringify(api, null, 2);
+  })
+  .catch(error => {
+    document.getElementById('routes').textContent =
+      'Could not load ' + specUrl + ': ' + error;
+  });
+</script></body></html>»;
+}
+
+// Escapes text for an HTML attribute value.
+عرف هرب_سمة_html(القيمة: &نص): نص {
+    دع الناتج: متغير متجه ط8 = [];
+    دع ف: متغير طبيعي = 0;
+    طالما (ف < (الطول(*القيمة) مثل طبيعي)) {
+        دع ب: ط8 = (*القيمة)[ف];
+        إذا (ب == 0x26) { ألحق_بايتات_نص(&متغير الناتج, «&amp;»); }
+        وإلا إذا (ب == 0x3C) { ألحق_بايتات_نص(&متغير الناتج, «&lt;»); }
+        وإلا إذا (ب == 0x3E) { ألحق_بايتات_نص(&متغير الناتج, «&gt;»); }
+        وإلا إذا (ب == 0x22) { ألحق_بايتات_نص(&متغير الناتج, «&quot;»); }
+        وإلا إذا (ب == 0x27) { ألحق_بايتات_نص(&متغير الناتج, «&#39;»); }
+        وإلا { ألحق(الناتج, ب); };
+        ف := ف + 1;
+    }
+    أرجع من_بايتات(&الناتج);
+}
+
+// The documentation page, loading the OpenAPI document from رابط_المخطط.
+عام عرف صفحة_توثيق_بمخطط(رابط_المخطط: &نص): نص {
+    دع القالب: نص = قالب_صفحة_التوثيق();
+    دع العلامة: نص = «@@NAHR_OPENAPI_URL@@»;
+    دع الرابط: نص = هرب_سمة_html(رابط_المخطط);
+    أرجع استبدل_في_النص(&القالب, &العلامة, &الرابط);
+}
+
+// The documentation page with a relative spec URL ("openapi.json"), so it
+// keeps working when the API is nested under a prefix.
+عام عرف صفحة_توثيق(): نص {
+    دع الرابط: نص = «openapi.json»;
+    أرجع صفحة_توثيق_بمخطط(&الرابط);
+}
+
+عام عرف رد_صفحة_التوثيق(): استجابة {
+    دع الصفحة: نص = صفحة_توثيق();
+    أرجع رد_صفحة(200, &الصفحة);
+}
+
+عرف نفذ_رد_جسون_ثابت<S>(
+    المعطيات: &متجه نص,
+    الإزاحة: طبيعي,
+    الحالة: &S,
+    الطلب: &طلب,
+    المعاملات: &معاملات_مسار
+): استجابة {
+    دع الاستجابة: متغير استجابة = رد_نصي(200, &(*المعطيات)[الإزاحة]);
+    دع النوع: نص = «application/json; charset=utf-8»;
+    دع تجاهل: منطقي = عين_نوع_المحتوى(&متغير الاستجابة, &النوع);
+    أرجع الاستجابة;
+}
+
+عرف نفذ_رد_صفحة_ثابتة<S>(
+    المعطيات: &متجه نص,
+    الإزاحة: طبيعي,
+    الحالة: &S,
+    الطلب: &طلب,
+    المعاملات: &معاملات_مسار
+): استجابة {
+    أرجع رد_صفحة(200, &(*المعطيات)[الإزاحة]);
+}
+
+عرف نفذ_فشل_المخطط<S>(
+    المعطيات: &متجه نص,
+    الإزاحة: طبيعي,
+    الحالة: &S,
+    الطلب: &طلب,
+    المعاملات: &معاملات_مسار
+): استجابة {
+    دع الرسالة: نص = «OpenAPI document serialization failed»;
+    أرجع رد_نصي(500, &الرسالة);
+}
+
+// Serves the document as JSON. It is serialized once, when the handler is
+// created; the JSON text is the handler's argument.
+عام عرف معالج_المخطط<S>(
+    الوثيقة: وثيقة_واجهة
+): معالج<S> {
+    طابق واجهة_إلى_جسون(&الوثيقة) مع
+    | نتيجة.خطأ(_) -> {
+        دع التنفيذ: تنفيذ_مسار<S> = دالة(
+            المعطيات: &متجه نص,
+            الإزاحة: طبيعي,
+            الحالة: &S,
+            الطلب: &طلب,
+            المعاملات: &معاملات_مسار
+        ): استجابة -> نفذ_فشل_المخطط(المعطيات, الإزاحة, الحالة, الطلب, المعاملات);
+        دع المعطيات: متجه نص = [];
+        أرجع معالج_بمعطيات(التنفيذ, المعطيات);
+    }
+    | نتيجة.نجح(النص) -> {
+        دع التنفيذ: تنفيذ_مسار<S> = دالة(
+            المعطيات: &متجه نص,
+            الإزاحة: طبيعي,
+            الحالة: &S,
+            الطلب: &طلب,
+            المعاملات: &معاملات_مسار
+        ): استجابة -> نفذ_رد_جسون_ثابت(المعطيات, الإزاحة, الحالة, الطلب, المعاملات);
+        دع المعطيات: متجه نص = [النص];
+        أرجع معالج_بمعطيات(التنفيذ, المعطيات);
+    };
+}
+
+// The documentation page loading the document from رابط_المخطط.
+عام عرف معالج_صفحة_توثيق_بمخطط<S>(رابط_المخطط: &نص): معالج<S> {
+    دع التنفيذ: تنفيذ_مسار<S> = دالة(
+        المعطيات: &متجه نص,
+        الإزاحة: طبيعي,
+        الحالة: &S,
+        الطلب: &طلب,
+        المعاملات: &معاملات_مسار
+    ): استجابة -> نفذ_رد_صفحة_ثابتة(المعطيات, الإزاحة, الحالة, الطلب, المعاملات);
+    دع المعطيات: متجه نص = [صفحة_توثيق_بمخطط(رابط_المخطط)];
+    أرجع معالج_بمعطيات(التنفيذ, المعطيات);
+}
+
+عام عرف معالج_صفحة_التوثيق<S>(): معالج<S> {
+    دع الرابط: نص = «openapi.json»;
+    أرجع معالج_صفحة_توثيق_بمخطط(&الرابط);
+}
+
+عام مرادف openapi_response = رد_مخطط_واجهة;
+عام مرادف docs_page = صفحة_توثيق;
+عام مرادف docs_page_for = صفحة_توثيق_بمخطط;
+عام مرادف docs_handler_for = معالج_صفحة_توثيق_بمخطط;
+عام مرادف docs_response = رد_صفحة_التوثيق;
+عام مرادف openapi_handler = معالج_المخطط;
+عام مرادف docs_handler = معالج_صفحة_التوثيق;

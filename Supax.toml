@@ -1,0 +1,34 @@
+[package]
+name = "nahr"
+version = "0.1.0-dev"
+description = "Nahr web framework for SultanC"
+
+[package.names]
+en = "nahr"
+ar = "نهر"
+
+[imports-alias]
+routing        = { en = "routing",        ar = "توجيه" }
+handler        = { en = "handler",        ar = "معالجة" }
+extract        = { en = "extract",        ar = "استخراج" }
+response       = { en = "response",       ar = "ردود" }
+body           = { en = "body",           ar = "جسم" }
+middleware     = { en = "middleware",     ar = "وسطاء" }
+serve          = { en = "serve",          ar = "تشغيل" }
+log            = { en = "log",            ar = "سجلات" }
+live           = { en = "live",           ar = "مباشر" }
+error_handling = { en = "error_handling", ar = "أخطاء" }
+json           = { en = "json",           ar = "جسون" }
+form           = { en = "form",           ar = "نموذج" }
+extension      = { en = "extension",      ar = "سياق" }
+cookies        = { en = "cookies",        ar = "كعكات" }
+session        = { en = "session",        ar = "جلسات" }
+testing        = { en = "testing",        ar = "اختبار" }
+validation     = { en = "validation",     ar = "تحقق" }
+openapi        = { en = "openapi",        ar = "توثيق" }
+sse            = { en = "sse",            ar = "أحداث" }
+websocket      = { en = "websocket",      ar = "مقبس_ويب" }
+template       = { en = "template",       ar = "قوالب" }
+
+[lib]
+path = "src"

@@ -1,0 +1,5 @@
+[package]
+name = "nahr_example"
+
+[dependencies]
+nahr = { path = ".." }

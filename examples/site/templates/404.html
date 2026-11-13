@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}404 · {{ t.site }}{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>404</h1>
+  <p class="lead">{{ t.not_found }}</p>
+  <p><a href="{{ home }}">{{ t.back }}</a></p>
+</section>
+{% endblock %}

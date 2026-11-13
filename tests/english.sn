@@ -1,0 +1,43 @@
+// The English surface: the same router, extractors and middleware.
+from std.error import Error, error_new;
+from std.text import join;
+from std.text import texts_equal;
+from nahr.routing import router, new_router, get, layer;
+from nahr.handler import request, from_fn, with_extractor;
+from nahr.extract import extractor, path_params, extract_path;
+from nahr.response import response;
+from nahr.body import text_response;
+from nahr.middleware import compression;
+from nahr.routing import middleware;
+from nahr.testing import test_get, response_status, response_text;
+
+// A failed check, with the check it was.
+def check_failed(check: string): result int, Error {
+    let parts: vector string = ["failed: ", check];
+    let none: string = "";
+    return result.err(error_new(join(&parts, &none)));
+}
+
+def hello(state: &int, name: string): response {
+    return text_response(200, &name);
+}
+
+@@test
+def english_surface(): result int, Error {
+    let app: mutable router<int> = new_router(0);
+    let pattern: string = "/hello/{name}";
+    let key: string = "name";
+    let name: extractor<int, string> = extract_path(&key);
+    match get(&mutable app, &pattern, with_extractor(name, hello)) with
+    | result.err(_) -> { return check_failed("match get(&mutable app, &pattern, with_extractor(name, hello)) with"); }
+    | result.ok(_) -> { };
+    let gzip: middleware<int> = compression(1024);
+    layer(&mutable app, gzip);
+    let target: string = "/hello/%D9%86%D9%87%D8%B1";
+    let reply: response = test_get(&app, &target);
+    if (response_status(&reply) != 200) { return check_failed("response_status(&reply) != 200"); };
+    let body: string = response_text(&reply);
+    let expected: string = "نهر";
+    if (!texts_equal(&body, &expected)) { return check_failed("!texts_equal(&body, &expected)"); };
+    return result.ok(0);
+}

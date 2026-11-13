@@ -1,0 +1,26 @@
+// The root file of the nahr package (Arabic spelling نهر). It declares the
+// Arabic spellings of Nahr's public directories, so both import forms name one
+// module: `من نهر.توجيه استورد موجه;` is `from nahr.routing import router;`.
+// A spelling is one more name of a module, never a second module.
+
+module routing { ar: توجيه };
+module handler { ar: معالجة };
+module extract { ar: استخراج };
+module response { ar: ردود };
+module body { ar: جسم };
+module middleware { ar: وسطاء };
+module serve { ar: تشغيل };
+module log { ar: سجلات };
+module live { ar: مباشر };
+module error_handling { ar: أخطاء };
+module json { ar: جسون };
+module form { ar: نموذج };
+module extension { ar: سياق };
+module cookies { ar: كعكات };
+module session { ar: جلسات };
+module testing { ar: اختبار };
+module validation { ar: تحقق };
+module openapi { ar: توثيق };
+module sse { ar: أحداث };
+module websocket { ar: مقبس_ويب };
+module template { ar: قوالب };

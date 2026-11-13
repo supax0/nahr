@@ -1,0 +1,28 @@
+// The smallest Nahr app: one GET route on 127.0.0.1:8000.
+//
+// From the folder that holds nahr and sultanc:
+//     (cd sultanc && ./build/sultanc "$OLDPWD/nahr/examples/en/hello.sn" --package-graph "$OLDPWD/nahr/examples/package-graph.toml" -o "$OLDPWD/hello_en")
+from nahr.routing import router, new_router, get;
+from nahr.handler import request, from_fn;
+from nahr.extract import path_params;
+from nahr.response import response;
+from nahr.body import text_response;
+from nahr.serve import serve_on;
+
+def home(state: &int, req: &request, params: &path_params): response {
+    let body: string = "Hello from Nahr";
+    return text_response(200, &body);
+}
+
+def main(): int {
+    let app: mutable router<int> = new_router(0);
+    let path: string = "/";
+    match get(&mutable app, &path, from_fn(home)) with
+    | result.err(_) -> { return 1; }
+    | result.ok(_) -> { };
+
+    let address: string = "127.0.0.1:8000";
+    match serve_on(&address, &app) with
+    | result.err(_) -> { return 2; }
+    | result.ok(code) -> { return code; };
+}

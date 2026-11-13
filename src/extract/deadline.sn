@@ -1,0 +1,23 @@
+من std.http استورد
+    طلب_ويب,
+    هل_ألغي_الطلب_ويب,
+    المتبقي_لمهلة_الطلب_بالمللي;
+
+// A request's deadline (std.http deadline.sn). With NAHR_HANDLER_TIMEOUT_MS
+// set, a handler that runs longer is answered 503 by the server; it can stop
+// early by checking between steps, as Go handlers check ctx.Done():
+//
+//     إذا (ألغي_الطلب(الطلب)) { أرجع رد_نصي(503, &«…»); };
+
+// Past its deadline, or the server is shutting down and its grace is over.
+عام عرف ألغي_الطلب(الطلب: &طلب_ويب<متجه ط8>): منطقي {
+    أرجع هل_ألغي_الطلب_ويب(الطلب);
+}
+
+// Milliseconds left before the deadline; none without one.
+عام عرف المتبقي_للطلب(الطلب: &طلب_ويب<متجه ط8>): اختياري عدد {
+    أرجع المتبقي_لمهلة_الطلب_بالمللي(الطلب);
+}
+
+عام مرادف request_cancelled = ألغي_الطلب;
+عام مرادف request_remaining_ms = المتبقي_للطلب;

@@ -1,0 +1,180 @@
+// Benchmark server: one endpoint per kind of cost.
+//
+//   GET  /plain             2-byte text, nothing else
+//   GET  /json              small JSON object through the writer
+//   GET  /params/{id}?q=x   two extractors (uint path parameter, query)
+//   POST /echo              text body extractor, echoed back
+//   GET  /large             64 KiB body
+//   GET  /sleep             waits 10 ms (I/O-bound handler)
+//   GET  /cpu               ~1 ms of arithmetic, no allocation
+//   GET  /alloc             builds and drops 200 small vectors
+//
+// Environment:
+//   NAHR_BENCH_SERIAL=1      one connection at a time (serve_on)
+//   NAHR_BENCH_EVENTED=1     std's event-driven server (serve_on_evented)
+//   NAHR_BENCH_WORKERS=n     thread-pool size (0 or unset: one per CPU)
+//   NAHR_BENCH_MIDDLEWARE=1  json_errors + request_id + rate_limit + gzip on
+//   NAHR_BENCH_PORT=8090
+from std.io import println;
+from std.env import get_environment_variable;
+from std.text import texts_equal, repeat_text, uint_to_text, parse_uint, join;
+from std.time import sleep_ns;
+from nahr.routing import router, new_router, get, post, layer, middleware, routing_error;
+from nahr.handler import request, from_fn, with_extractor, with_extractors;
+from nahr.extract import extractor, path_params, extract_path_uint, extract_query, text_body;
+from nahr.response import response;
+from nahr.body import text_response;
+from nahr.json import json_writer, json_begin_object, json_end_object, json_string_field, json_int_field, json_response_with;
+from nahr.middleware import json_errors, request_id, rate_limit, global_key, rate_limit_key, compression;
+from nahr.serve import serve_on, serve_on_parallel, serve_on_evented, serve_error, serve_error_text;
+
+type bench_state = { large: string };
+
+def plain(state: &bench_state, req: &request, params: &path_params): response {
+    let body: string = "ok";
+    return text_response(200, &body);
+}
+
+type item = { name: string, id: int };
+
+def encode_item(value: &item, out: &mutable json_writer): void {
+    let name: string = "name";
+    let id: string = "id";
+    json_begin_object(out);
+    json_string_field(out, &name, &(*value).name);
+    json_int_field(out, &id, (*value).id);
+    json_end_object(out);
+}
+
+def json(state: &bench_state, req: &request, params: &path_params): response {
+    let value: item = { name: "nahr", id: 42 };
+    return json_response_with(200, &value, encode_item);
+}
+
+def params(state: &bench_state, id: uint, q: option string): response {
+    let body: string = uint_to_text(id);
+    return text_response(200, &body);
+}
+
+def echo(state: &bench_state, body: string): response {
+    return text_response(200, &body);
+}
+
+def large(state: &bench_state, req: &request, params: &path_params): response {
+    return text_response(200, &(*state).large);
+}
+
+def slow(state: &bench_state, req: &request, params: &path_params): response {
+    let ignored: result int, int = sleep_ns(10000000);
+    let body: string = "ok";
+    return text_response(200, &body);
+}
+
+def cpu(state: &bench_state, req: &request, params: &path_params): response {
+    let total: mutable uint = 0;
+    let i: mutable uint = 0;
+    while (i < 1000000) { total := total + (i % 7); i := i + 1; }
+    let body: mutable string = "ok";
+    if (total == 1) { body := "x"; };
+    return text_response(200, &body);
+}
+
+def alloc(state: &bench_state, req: &request, params: &path_params): response {
+    let total: mutable uint = 0;
+    let round: mutable uint = 0;
+    while (round < 200) {
+        let v: mutable vector uint = [];
+        let i: mutable uint = 0;
+        while (i < 64) { append(v, i); i := i + 1; }
+        total := total + (length(v) as uint);
+        round := round + 1;
+    }
+    let body: string = uint_to_text(total);
+    return text_response(200, &body);
+}
+
+def env_is(name: string, expected: string): bool {
+    match get_environment_variable(&name) with
+    | result.ok(option.some(value)) -> { return texts_equal(&value, &expected); }
+    | _ -> { return false; };
+}
+
+def env_uint(name: string, fallback: uint): uint {
+    match get_environment_variable(&name) with
+    | result.ok(option.some(value)) -> {
+        match parse_uint(&value) with
+        | result.ok(n) -> { return n; }
+        | result.err(_) -> { return fallback; };
+    }
+    | _ -> { return fallback; };
+}
+
+def ok(registered: result uint, routing_error): bool {
+    match registered with
+    | result.ok(_) -> { return true; }
+    | result.err(_) -> { return false; };
+}
+
+
+def main(): int {
+    let unit: string = "0123456789abcdef";
+    let state: bench_state = { large: repeat_text(&unit, 4096) };
+    let app: mutable router<bench_state> = new_router(state);
+
+    let id_key: string = "id";
+    let q_key: string = "q";
+    let id: extractor<bench_state, uint> = extract_path_uint(&id_key);
+    let q: extractor<bench_state, option string> = extract_query(&q_key);
+    let body: extractor<bench_state, string> = text_body();
+
+    let paths: vector string = ["/plain", "/json", "/params/{id}", "/echo", "/large", "/sleep", "/cpu", "/alloc"];
+    if (!ok(get(&mutable app, &paths[0], from_fn(plain)))) { return 1; };
+    if (!ok(get(&mutable app, &paths[1], from_fn(json)))) { return 1; };
+    if (!ok(get(&mutable app, &paths[2], with_extractors(id, q, params)))) { return 1; };
+    if (!ok(post(&mutable app, &paths[3], with_extractor(body, echo)))) { return 1; };
+    if (!ok(get(&mutable app, &paths[4], from_fn(large)))) { return 1; };
+    if (!ok(get(&mutable app, &paths[5], from_fn(slow)))) { return 1; };
+    if (!ok(get(&mutable app, &paths[6], from_fn(cpu)))) { return 1; };
+    if (!ok(get(&mutable app, &paths[7], from_fn(alloc)))) { return 1; };
+
+    if (env_is("NAHR_BENCH_MIDDLEWARE", "1")) {
+        let errors: middleware<bench_state> = json_errors();
+        let ids: middleware<bench_state> = request_id();
+        let key: rate_limit_key<bench_state> = global_key();
+        let limit: middleware<bench_state> = rate_limit(1000000000, 60, key);
+        let gzip: middleware<bench_state> = compression(1024);
+        layer(&mutable app, errors);
+        layer(&mutable app, ids);
+        layer(&mutable app, limit);
+        layer(&mutable app, gzip);
+    };
+
+    let port: uint = env_uint("NAHR_BENCH_PORT", 8090);
+    let parts: vector string = ["127.0.0.1:", uint_to_text(port)];
+    let address: string = join_parts(&parts);
+    if (env_is("NAHR_BENCH_SERIAL", "1")) {
+        match serve_on(&address, &app) with
+        | result.err(e) -> { report_error(&e); return 2; }
+        | result.ok(code) -> { return code; };
+    };
+    if (env_is("NAHR_BENCH_EVENTED", "1")) {
+        let evented: router<bench_state> = app;
+        match serve_on_evented(&address, evented, env_uint("NAHR_BENCH_WORKERS", 0)) with
+        | result.err(e) -> { report_error(&e); return 4; }
+        | result.ok(code) -> { return code; };
+    };
+    let ready: router<bench_state> = app;
+    match serve_on_parallel(&address, ready, env_uint("NAHR_BENCH_WORKERS", 0)) with
+    | result.err(e) -> { report_error(&e); return 3; }
+    | result.ok(code) -> { return code; };
+}
+
+def report_error(e: &serve_error): void {
+    let parts: vector string = ["nahr bench: server failed: ", serve_error_text(e)];
+    println(join_parts(&parts));
+}
+
+def join_parts(parts: &vector string): string {
+    let none: string = "";
+    return join(parts, &none);
+}

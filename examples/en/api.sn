@@ -1,0 +1,167 @@
+// A small API: path and query extractors, a route protected with @protected,
+// gzip with @gzipped, CORS for every route, and an OpenAPI document with its
+// docs page.
+//
+// GET /                      -> "Nahr"
+// GET /users/{name}?lang=en  -> greeting (the name is percent-decoded)
+// GET /admin                 -> needs "Authorization: Bearer secret"
+// GET /report                -> long text, gzip-encoded
+// GET /info                  -> an application type as JSON (json_response_with)
+// Every error is JSON, and every request gets an X-Request-Id.
+// GET /openapi.json, /docs   -> OpenAPI 3.2.0 document and docs page
+//
+// From the folder that holds nahr and sultanc:
+//     (cd sultanc && ./build/sultanc "$OLDPWD/nahr/examples/en/api.sn" --package-graph "$OLDPWD/nahr/examples/package-graph.toml" -o "$OLDPWD/nahr_api")
+from std.text import texts_equal, join, repeat_text;
+from nahr.routing import router, new_router, get, layer, middleware;
+from nahr.handler import request, handler, from_fn, with_extractors;
+from nahr.extract import extractor, path_params, extract_path, extract_query;
+from nahr.response import response;
+from nahr.body import text_response;
+from nahr.middleware import
+    cors_config, default_cors, cors, cors_error, protected, gzipped,
+    json_errors, request_id;
+from nahr.json import
+    json_writer, json_begin_object, json_end_object, json_string_field,
+    json_int_field, json_response_with;
+from nahr.openapi import
+    api_document, api_operation, new_document, get_operation, status_response,
+    documented_route, openapi_handler, docs_handler, parameter, add_response,
+    path_parameter, query_parameter, string_schema;
+from nahr.serve import serve_on;
+
+def home(state: &int, req: &request, params: &path_params): response {
+    let body: string = "Nahr";
+    return text_response(200, &body);
+}
+
+def greet(state: &int, name: string, lang: option string): response {
+    let ar: string = "ar";
+    let greeting: mutable string = "Hello";
+    match lang with
+    | option.some(value) -> {
+        if (texts_equal(&value, &ar)) { greeting := "أهلا"; };
+    }
+    | option.none -> { };
+    let parts: vector string = [greeting, name];
+    let separator: string = ", ";
+    let body: string = join(&parts, &separator);
+    return text_response(200, &body);
+}
+
+type info = { name: string, version: string, routes: int };
+
+def encode_info(value: &info, out: &mutable json_writer): void {
+    json_begin_object(out);
+    let name: string = "name";
+    let version: string = "version";
+    let routes: string = "routes";
+    json_string_field(out, &name, &(*value).name);
+    json_string_field(out, &version, &(*value).version);
+    json_int_field(out, &routes, (*value).routes);
+    json_end_object(out);
+}
+
+def show_info(state: &int, req: &request, params: &path_params): response {
+    let value: info = { name: "Nahr", version: "0.1.0", routes: 7 };
+    return json_response_with(200, &value, encode_info);
+}
+
+def token_ok(state: &int, token: &string): bool {
+    let secret: string = "secret";
+    return texts_equal(token, &secret);
+}
+
+// Every call of admin first goes through protected(token_ok, …).
+@protected(token_ok)
+def admin(state: &int, req: &request, params: &path_params): response {
+    let body: string = "admin panel";
+    return text_response(200, &body);
+}
+
+// Decorators stack: the token is checked first, then the reply is gzipped.
+@gzipped
+@protected(token_ok)
+def report(state: &int, req: &request, params: &path_params): response {
+    let line: string = "a line of the report\n";
+    let body: string = repeat_text(&line, 200);
+    return text_response(200, &body);
+}
+
+// Registers a GET route together with its OpenAPI operation. Path parameters
+// must be declared on the operation; the document rejects "/users/{name}"
+// otherwise.
+def document(
+    app: &mutable router<int>,
+    doc: &mutable api_document,
+    operation: api_operation,
+    route_handler: handler<int>
+): bool {
+    let op: mutable api_operation = operation;
+    let status: string = "200";
+    let description: string = "OK";
+    add_response(&mutable op, status_response(&status, &description));
+    match documented_route(app, doc, op, route_handler) with
+    | result.err(_) -> { return false; }
+    | result.ok(_) -> { return true; };
+}
+
+def document_get(
+    app: &mutable router<int>,
+    doc: &mutable api_document,
+    path: string,
+    route_handler: handler<int>
+): bool {
+    return document(app, doc, get_operation(&path), route_handler);
+}
+
+def main(): int {
+    let app: mutable router<int> = new_router(0);
+    let title: string = "Nahr example";
+    let version: string = "0.1.0";
+    let doc: mutable api_document = new_document(&title, &version);
+
+    // Extractors are bound with their types: SultanC infers a generic call's
+    // type arguments from its arguments or from the binding.
+    let name_key: string = "name";
+    let lang_key: string = "lang";
+    let name: extractor<int, string> = extract_path(&name_key);
+    let lang: extractor<int, option string> = extract_query(&lang_key);
+
+    if (!document_get(&mutable app, &mutable doc, "/", from_fn(home))) { return 1; };
+    if (!document_get(&mutable app, &mutable doc, "/admin", from_fn(admin))) { return 2; };
+    if (!document_get(&mutable app, &mutable doc, "/report", from_fn(report))) { return 3; };
+    if (!document_get(&mutable app, &mutable doc, "/info", from_fn(show_info))) { return 9; };
+
+    let users_path: string = "/users/{name}";
+    let users: mutable api_operation = get_operation(&users_path);
+    parameter(&mutable users, path_parameter(&name_key, string_schema()));
+    parameter(&mutable users, query_parameter(&lang_key, false, string_schema()));
+    if (!document(&mutable app, &mutable doc, users,
+        with_extractors(name, lang, greet))) { return 4; };
+
+    let spec_path: string = "/openapi.json";
+    let docs_path: string = "/docs";
+    match get(&mutable app, &spec_path, openapi_handler(clone(&doc))) with
+    | result.err(_) -> { return 5; } | result.ok(_) -> { };
+    let docs: handler<int> = docs_handler();
+    match get(&mutable app, &docs_path, docs) with
+    | result.err(_) -> { return 6; } | result.ok(_) -> { };
+
+    // JSON errors first, so they see every response.
+    let errors: middleware<int> = json_errors();
+    let ids: middleware<int> = request_id();
+    layer(&mutable app, errors);
+    layer(&mutable app, ids);
+
+    let policy: cors_config = default_cors();
+    let cors_result: result middleware<int>, cors_error = cors(&policy);
+    match cors_result with
+    | result.err(_) -> { return 7; }
+    | result.ok(layer_value) -> { layer(&mutable app, layer_value); };
+
+    let address: string = "127.0.0.1:8000";
+    match serve_on(&address, &app) with
+    | result.err(_) -> { return 8; }
+    | result.ok(code) -> { return code; };
+}

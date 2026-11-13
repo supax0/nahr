@@ -1,0 +1,14 @@
+<!doctype html><meta charset=utf-8><title>Nahr live</title>
+<h1>Nahr live</h1>
+<p>Server-sent events: <span id=ticks>waiting…</span></p>
+<p><input id=msg placeholder='say something'> <button id=send>Send</button></p>
+<pre id=log></pre>
+<script>
+const log = (t) => document.getElementById('log').textContent += t + '\n';
+const events = new EventSource('/ticks');
+events.addEventListener('tick', (e) => document.getElementById('ticks').textContent = e.data);
+const ws = new WebSocket(`ws://${location.host}/ws`);
+ws.onmessage = (e) => log(e.data);
+ws.onclose = () => log('(closed)');
+document.getElementById('send').onclick = () => ws.send(document.getElementById('msg').value);
+</script>

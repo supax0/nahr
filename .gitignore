@@ -1,0 +1,4 @@
+__pycache__/
+bench/compare/*/target/
+bench/compare/fastapi/.venv/
+bench/results/

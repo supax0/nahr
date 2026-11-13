@@ -1,0 +1,24 @@
+// Nahr's tests. Each module below declares its tests with @@اختبار
+// (@@test in English); `sultanc test` finds them in every module this file
+// imports, builds one executable, and runs each test in its own process:
+//
+//     sultanc test --package-graph tests/package-graph.toml tests/tests.sn
+//
+// tests/run.sh runs them and builds every example.
+استورد "additions.sn";
+استورد "decorated_routes.sn";
+استورد "decorators.sn";
+استورد "english.sn";
+استورد "extractors.sn";
+استورد "log.sn";
+استورد "middleware.sn";
+استورد "modules.sn";
+استورد "json_embed_limits.sn";
+استورد "openapi.sn";
+استورد "protocols.sn";
+استورد "rate_limit.sn";
+استورد "routing.sn";
+استورد "state.sn";
+استورد "static.sn";
+استورد "surface.sn";
+استورد "templates.sn";

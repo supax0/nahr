@@ -1,0 +1,110 @@
+// Live connections: a WebSocket chat-style echo and a stream of server-sent
+// events, as FastAPI's @app.websocket and StreamingResponse.
+//
+//   GET /ws        WebSocket: every text message comes back as "echo: …";
+//                  "bye" closes the connection
+//   GET /ticks     server-sent events: one "tick" event per second, 5 times
+//   GET /          a page that uses both
+//
+//     (cd sultanc && ./build/sultanc "$OLDPWD/nahr/examples/en/live.sn" --package-graph "$OLDPWD/nahr/examples/package-graph.toml" -o "$OLDPWD/live_en")
+//     ./live_en      # http://127.0.0.1:8000
+//
+// A live handler keeps its connection (and, on the thread pool, a worker)
+// until it returns. The event-driven server is the better fit for many
+// long-lived connections: NAHR_EVENTED=1.
+from std.text import texts_equal, join, uint_to_text;
+from std.env import get_environment_variable;
+from std.time import sleep_ns;
+from nahr.routing import router, new_router, get, websocket_route, sse_route, routing_error;
+from nahr.handler import request, from_fn;
+from nahr.extract import path_params;
+from nahr.response import response;
+from nahr.body import html_response;
+from nahr.live import
+    websocket_connection, websocket_receive, websocket_send_text, websocket_close,
+    message_text, is_text_message, response_stream, stream_send_event;
+from nahr.sse import sse_event, new_sse_event, sse_event_set_type, sse_event_set_id;
+from nahr.serve import serve_on, serve_on_parallel, serve_on_evented;
+
+type app = { name: string };
+
+def page(state: &app, req: &request, params: &path_params): response {
+    // The page is compiled into the binary (embed_file reads it at build time).
+    let body: string = embed_file("live.html");
+    return html_response(200, &body);
+}
+
+// One connection: echo every text message until "bye" or the client closes.
+def echo(state: &app, req: &request, params: &path_params, conn: &mutable websocket_connection): void {
+    let hello: string = "connected to Nahr";
+    let sent: bool = websocket_send_text(conn, &hello);
+    let running: mutable bool = true;
+    while (running) {
+        match websocket_receive(conn) with
+        | result.err(_) -> { running := false; }
+        | result.ok(message) -> {
+            if (is_text_message(&message)) {
+                let text: string = message_text(&message);
+                let bye: string = "bye";
+                if (texts_equal(&text, &bye)) {
+                    let reason: string = "goodbye";
+                    websocket_close(conn, 1000, &reason);
+                    running := false;
+                } else {
+                    let parts: vector string = ["echo: ", text];
+                    let none: string = "";
+                    let reply: string = join(&parts, &none);
+                    if (!websocket_send_text(conn, &reply)) { running := false; };
+                };
+            };
+        };
+    }
+}
+
+// Five "tick" events, one a second; stops early if the client leaves.
+def ticks(state: &app, req: &request, params: &path_params, stream: &mutable response_stream): void {
+    let i: mutable uint = 1;
+    while (i <= 5) {
+        let data: string = uint_to_text(i);
+        let event: mutable sse_event = new_sse_event(&data);
+        let kind: string = "tick";
+        sse_event_set_type(&mutable event, &kind);
+        sse_event_set_id(&mutable event, &data);
+        if (!stream_send_event(stream, &event)) { return; };
+        if (i < 5) { let ignored: result int, int = sleep_ns(1000000000); };
+        i := i + 1;
+    }
+}
+
+def env_or(name: string, fallback: string): string {
+    match get_environment_variable(&name) with
+    | result.ok(option.some(value)) -> { return value; }
+    | _ -> { return fallback; };
+}
+
+def main(): int {
+    let state: app = { name: "live" };
+    let routes: mutable router<app> = new_router(state);
+    let root: string = "/";
+    let ws: string = "/ws";
+    let events: string = "/ticks";
+    match get(&mutable routes, &root, from_fn(page)) with | result.err(_) -> { return 1; } | result.ok(_) -> { };
+    match websocket_route(&mutable routes, &ws, echo) with | result.err(_) -> { return 2; } | result.ok(_) -> { };
+    match sse_route(&mutable routes, &events, ticks) with | result.err(_) -> { return 3; } | result.ok(_) -> { };
+
+    let port: string = env_or("NAHR_PORT", "8000");
+    let parts: vector string = ["127.0.0.1:", port];
+    let none: string = "";
+    let address: string = join(&parts, &none);
+    let serial: string = env_or("NAHR_SERIAL", "");
+    let one: string = "1";
+    if (texts_equal(&serial, &one)) {
+        match serve_on(&address, &routes) with | result.err(_) -> { return 4; } | result.ok(_) -> { return 0; };
+    };
+    let evented: string = env_or("NAHR_EVENTED", "");
+    let ready: router<app> = routes;
+    if (texts_equal(&evented, &one)) {
+        match serve_on_evented(&address, ready, 0) with | result.err(_) -> { return 5; } | result.ok(_) -> { return 0; };
+    };
+    match serve_on_parallel(&address, ready, 0) with | result.err(_) -> { return 6; } | result.ok(_) -> { return 0; };
+}

@@ -1,0 +1,117 @@
+// Derived JSON (@@json), files embedded in the binary, rate limits per
+// client address, request deadlines.
+من std.error استورد فشل, فشل_من;
+من std.text استورد صل_النصوص;
+from std.text import texts_equal, contains;
+from nahr.routing import router, new_router, get, post, layer, serve_embedded_with_cache;
+from nahr.handler import request, from_fn;
+from nahr.extract import path_params, request_cancelled, request_remaining_ms;
+from nahr.response import response;
+from nahr.json import read_json_with, json_response_of;
+from nahr.middleware import rate_limit, client_address_key, rate_limit_key;
+from nahr.testing import
+    dispatch_test, test_get, test_request, test_request_header, test_request_text, test_request_remote,
+    response_status, response_text, response_header_or_empty;
+
+// فحص لم يتحقق، مع نص الفحص.
+عرف لم_يتحقق(الفحص: نص): نتيجة عدد, فشل {
+    دع الأجزاء: متجه نص = [«لم يتحقق: », الفحص];
+    دع لا_شيء: نص = «»;
+    أرجع نتيجة.خطأ(فشل_من(صل_النصوص(&الأجزاء, &لا_شيء)));
+}
+
+@@json
+type item = { name: string, price: int, tags: vector string, note: option string };
+
+type app = { label: string };
+
+def create(state: &app, req: &request, params: &path_params): response {
+    match read_json_with(req, from_json__item) with
+    | result.err(rejection) -> { return rejection; }
+    | result.ok(value) -> {
+        let saved: mutable item = value;
+        saved.price := saved.price * 2;
+        return json_response_of(201, &saved, to_json__item);
+    };
+}
+
+def deadline(state: &app, req: &request, params: &path_params): response {
+    let parts: string = "ok";
+    if (request_cancelled(req)) { return json_response_of(503, &parts, quote); };
+    match request_remaining_ms(req) with
+    | option.some(_) -> { let t: string = "deadline"; return json_response_of(200, &t, quote); }
+    | option.none -> { return json_response_of(200, &parts, quote); };
+}
+
+def quote(text: &string): string { return clone(text); }
+
+def equals(text: &string, other: string): bool { return texts_equal(text, &other); }
+def has(text: &string, part: string): bool { return contains(text, &part); }
+
+def post_json(app_router: &router<app>, body: string, content_type: string): response {
+    let method: string = "POST";
+    let target: string = "/items";
+    let req: mutable request = test_request(&method, &target);
+    let name: string = "content-type";
+    let ignored: bool = test_request_header(&mutable req, &name, &content_type);
+    test_request_text(&mutable req, &body);
+    return dispatch_test(app_router, &req);
+}
+
+def get_from(app_router: &router<app>, target: string, remote: string): response {
+    let method: string = "GET";
+    let req: mutable request = test_request(&method, &target);
+    test_request_remote(&mutable req, &remote);
+    return dispatch_test(app_router, &req);
+}
+
+@@اختبار
+عرف الجسون_المشتق_والتضمين(): نتيجة عدد, فشل {
+    let state: app = { label: "t" };
+    let routes: mutable router<app> = new_router(state);
+    let items: string = "/items";
+    let js: string = "/app.js";
+    let late: string = "/deadline";
+    match post(&mutable routes, &items, from_fn(create)) with | result.err(_) -> { return لم_يتحقق("match post(&mutable routes, &items, from_fn(create)) with | result.err(_) -> { return 1; } | result.ok(_) -> { };"); } | result.ok(_) -> { };
+    match get(&mutable routes, &late, from_fn(deadline)) with | result.err(_) -> { return لم_يتحقق("match get(&mutable routes, &late, from_fn(deadline)) with | result.err(_) -> { return 2; } | result.ok(_) -> { };"); } | result.ok(_) -> { };
+    match serve_embedded_with_cache(&mutable routes, &js, embed_file("assets/hello.js"), "public, max-age=60") with
+    | result.err(_) -> { return لم_يتحقق("match serve_embedded_with_cache(&mutable routes, &js, embed_file('assets/hello.js'), 'public, max-age=60') with"); } | result.ok(_) -> { };
+
+    // @@json: decode, change, encode.
+    let ok: response = post_json(&routes, "{\"name\":\"قهوة\",\"price\":12,\"tags\":[\"hot\"]}", "application/json");
+    let ok_text: string = response_text(&ok);
+    if (response_status(&ok) != 201) { أرجع لم_يتحقق("response_status(&ok) != 201"); };
+    if (!equals(&ok_text, "{\"name\":\"قهوة\",\"price\":24,\"tags\":[\"hot\"],\"note\":null}")) { أرجع لم_يتحقق("!equals(&ok_text, '{\\'name\\':\\'قهوة\\',\\'price\\':24,\\'tags\\':[\\'hot\\'],\\'note\\':null}')"); };
+    let bad: response = post_json(&routes, "{\"name\":\"x\",\"price\":\"twelve\",\"tags\":[]}", "application/json");
+    let bad_text: string = response_text(&bad);
+    if (response_status(&bad) != 422 || !has(&bad_text, "price")) { أرجع لم_يتحقق("response_status(&bad) != 422 || !has(&bad_text, 'price')"); };
+    let wrong_type: response = post_json(&routes, "{}", "text/plain");
+    if (response_status(&wrong_type) != 415) { أرجع لم_يتحقق("response_status(&wrong_type) != 415"); };
+
+    // embed_file: the bytes are in the binary.
+    let file: response = get_from(&routes, "/app.js", "127.0.0.1:1");
+    let file_text: string = response_text(&file);
+    let ct: string = "content-type";
+    let cc: string = "cache-control";
+    let file_type: string = response_header_or_empty(&file, &ct);
+    let file_cache: string = response_header_or_empty(&file, &cc);
+    if (!equals(&file_text, "console.log(\"مرحبا\");\n")) { أرجع لم_يتحقق("!equals(&file_text, 'console.log(\\'مرحبا\\');\\n')"); };
+    if (!equals(&file_type, "text/javascript; charset=utf-8") || !equals(&file_cache, "public, max-age=60")) { أرجع لم_يتحقق("!equals(&file_type, 'text/javascript; charset=utf-8') || !equals(&file_cache, 'public, max-age=60')"); };
+
+    // No deadline without NAHR_HANDLER_TIMEOUT_MS.
+    let d: response = get_from(&routes, "/deadline", "127.0.0.1:1");
+    let d_text: string = response_text(&d);
+    if (!equals(&d_text, "ok")) { أرجع لم_يتحقق("!equals(&d_text, 'ok')"); };
+
+    // Rate limit per client address: 2 per minute each.
+    let key: rate_limit_key<app> = client_address_key();
+    layer(&mutable routes, rate_limit(2, 60, key));
+    let a1: response = get_from(&routes, "/deadline", "10.0.0.1:5000");
+    let a2: response = get_from(&routes, "/deadline", "10.0.0.1:5001");
+    let a3: response = get_from(&routes, "/deadline", "10.0.0.1:5002");
+    let b1: response = get_from(&routes, "/deadline", "10.0.0.2:5000");
+    if (response_status(&a1) != 200 || response_status(&a2) != 200) { أرجع لم_يتحقق("response_status(&a1) != 200 || response_status(&a2) != 200"); };
+    if (response_status(&a3) != 429) { أرجع لم_يتحقق("response_status(&a3) != 429"); };
+    if (response_status(&b1) != 200) { أرجع لم_يتحقق("response_status(&b1) != 200"); };
+    return نتيجة.نجح(0);
+}

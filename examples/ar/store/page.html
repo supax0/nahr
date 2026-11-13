@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>متجر نهر</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #15171c; --muted: #6b7280; --line: #e5e7eb; --soft: #f5f6f8;
+  --accent: #0e7490; --accent-fg: #ffffff; --good: #15803d; --bad: #b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115; --fg: #e8eaed; --muted: #9aa0a6; --line: #262a31; --soft: #171a20;
+    --accent: #22d3ee; --accent-fg: #0f1115; --good: #4ade80; --bad: #f87171;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; }
+main { max-width: 72rem; margin: 0 auto; padding: 1.75rem 1rem 3rem; }
+.num { font-variant-numeric: tabular-nums; }
+code { direction: ltr; unicode-bidi: isolate; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
+
+header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
+h1 { margin: 0; font-size: 2rem; }
+header p { margin: 0; color: var(--muted); }
+h2 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+
+/* أدوات البحث */
+.filters { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+input, select, button { font: inherit; color: var(--fg); }
+input, select { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: .5rem .7rem; }
+#q { flex: 1; min-width: 14rem; }
+.price { width: 6.5rem; }
+button { border: 0; border-radius: 6px; padding: .5rem 1.1rem; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+button.quiet { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+button:disabled { opacity: .45; cursor: default; }
+.summary { color: var(--muted); margin: .9rem 0 .5rem; font-size: .92rem; }
+.summary b { color: var(--fg); font-weight: 600; }
+
+/* الجدول */
+table { width: 100%; border-collapse: collapse; font-size: .93rem; }
+th, td { text-align: right; padding: .55rem .5rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: .85rem; }
+td.name { white-space: normal; }
+td.n, th.n { text-align: left; }
+.dim { color: var(--muted); }
+.stars { color: #d97706; letter-spacing: -1px; }
+.out { color: var(--bad); }
+.pager { display: flex; gap: .75rem; align-items: center; justify-content: center; margin-top: 1rem; color: var(--muted); }
+.table-wrap { overflow-x: auto; }
+
+/* اختبار الحمل */
+.load-controls { display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: end; }
+.field { display: flex; flex-direction: column; gap: .3rem; }
+.field label, .field > span { font-size: .85rem; color: var(--muted); }
+.segments { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.segments label { padding: .45rem .8rem; cursor: pointer; font-size: .92rem; color: var(--fg); }
+.segments label + label { border-inline-start: 1px solid var(--line); }
+.segments input { display: none; }
+.segments label:has(input:checked) { background: var(--accent); color: var(--accent-fg); }
+.scenario-note { color: var(--muted); font-size: .9rem; margin: .75rem 0 0; }
+
+.metrics { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 1.25rem; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.metric { padding: .9rem .25rem; }
+.metric + .metric { border-inline-start: 1px solid var(--line); padding-inline-start: 1rem; }
+.metric b { display: block; font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.metric span { color: var(--muted); font-size: .85rem; }
+.metric.main b { color: var(--accent); }
+@media (max-width: 760px) { .metrics { grid-template-columns: repeat(2, 1fr); } .metric + .metric { border-inline-start: 0; padding-inline-start: .25rem; } }
+
+.progress { height: 3px; background: var(--line); margin-top: -1px; }
+.progress div { height: 100%; width: 0; background: var(--accent); transition: width .25s linear; }
+.chart { margin-top: 1rem; }
+.chart-head { display: flex; justify-content: space-between; color: var(--muted); font-size: .85rem; }
+svg { display: block; width: 100%; height: 140px; }
+#line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+#area { fill: var(--accent); opacity: .12; }
+.result { margin-top: .75rem; font-size: .95rem; min-height: 1.5em; }
+.bad { color: var(--bad); }
+.method { color: var(--muted); font-size: .85rem; margin-top: 1.5rem; border-top: 1px solid var(--line); padding-top: .75rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>متجر نهر</h1>
+    <p><span class="num" id="total">100,000</span> منتج في الذاكرة · بحث بفهرس مقلوب · خادم مكتوب بلغة سلطان سي</p>
+  </header>
+
+  <!-- ———————— المتجر ———————— -->
+  <section>
+    <h2>المنتجات</h2>
+    <form class="filters" id="filters" autocomplete="off">
+      <input id="q" type="search" placeholder="ابحث: قهوة، سماعة، كرسي مكتب…" aria-label="بحث">
+      <select id="category" aria-label="الفئة"><option value="">كل الفئات</option></select>
+      <select id="sort" aria-label="الترتيب">
+        <option value="newest">الأحدث</option>
+        <option value="cheapest">الأرخص</option>
+        <option value="priciest">الأغلى</option>
+        <option value="rating">الأعلى تقييما</option>
+      </select>
+      <input class="price num" id="min" type="number" min="0" placeholder="من سعر" aria-label="أدنى سعر">
+      <input class="price num" id="max" type="number" min="0" placeholder="إلى سعر" aria-label="أعلى سعر">
+    </form>
+    <p class="summary" id="summary">…</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="n">#</th><th>المنتج</th><th>الفئة</th><th>العلامة</th><th>التقييم</th><th class="n">السعر</th><th class="n">المخزون</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button class="quiet" id="prev">السابق</button>
+      <span id="page-label" class="num"></span>
+      <button class="quiet" id="next">التالي</button>
+    </div>
+  </section>
+
+  <!-- ———————— اختبار الحمل ———————— -->
+  <section>
+    <h2>اختبار الحمل</h2>
+    <div class="load-controls">
+      <div class="field">
+        <span>السيناريو</span>
+        <div class="segments" id="scenarios">
+          <label><input type="radio" name="scenario" value="product" checked>منتج واحد</label>
+          <label><input type="radio" name="scenario" value="browse">تصفح فئة</label>
+          <label><input type="radio" name="scenario" value="search">بحث نصي</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="connections">الاتصالات</label>
+        <select id="connections"><option>16</option><option selected>64</option><option>128</option><option>256</option></select>
+      </div>
+      <div class="field">
+        <label for="seconds">المدة</label>
+        <select id="seconds"><option value="5">5 ثوان</option><option value="10" selected>10 ثوان</option><option value="20">20 ثانية</option></select>
+      </div>
+      <button id="start">ابدأ الاختبار</button>
+    </div>
+    <p class="scenario-note" id="scenario-note"></p>
+
+    <div class="metrics">
+      <div class="metric main"><b id="m-rate" class="num">0</b><span>طلب في الثانية</span></div>
+      <div class="metric"><b id="m-total" class="num">0</b><span>رد صحيح</span></div>
+      <div class="metric"><b id="m-p50" class="num">–</b><span>الوسيط (p50)</span></div>
+      <div class="metric"><b id="m-p99" class="num">–</b><span>p99</span></div>
+      <div class="metric"><b id="m-errors" class="num">0</b><span>ردود خاطئة / أخطاء شبكة</span></div>
+    </div>
+    <div class="progress"><div id="progress"></div></div>
+
+    <div class="chart">
+      <div class="chart-head"><span>الطلبات في الثانية أثناء الاختبار</span><span id="peak" class="num"></span></div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path id="area"></path><path id="line"></path></svg>
+    </div>
+    <p class="result" id="result"></p>
+
+    <p class="method">
+      يرسل الخادم الطلبات إلى نفسه: لكل اتصال خيط يبقيه مفتوحا (keep-alive) ويرسل طلبا بعد طلب، وتقرأ الأزمنة
+      من مدرج تكراري. لا يعد الرد صحيحا إلا إن كانت حالته 2xx وجسمه مطابقا للجسم المتوقع بايتا ببايت.
+      المولد والخادم يتقاسمان عملية ومعالجا واحدا، فهذه الأرقام عرض حي لا قياس للمقارنة: للمقارنة شغل
+      <code>bench/store.sh</code> بمولد في عملية منفصلة.
+    </p>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = new Intl.NumberFormat('en-US');
+const notes = {
+  product: 'طلب خفيف: منتج واحد برقمه من <code>/api/products/4242</code>. يقيس سرعة الخادم نفسه.',
+  browse: 'عمل حقيقي: كل طلب يمسح مئة ألف منتج بترتيب السعر ليجد فئة الإلكترونيات ويقطع الصفحة الخامسة.',
+  search: 'عمل حقيقي: كل طلب يبحث عن «قهوة عربية» في الفهرس المقلوب ويرتب مئة ألف منتج حسب التقييم.',
+};
+
+// ———————— المتجر ————————
+const state = { page: 1, pages: 1 };
+let pending = 0;
+
+function stars(r) { const n = Math.round(r / 10); return '★'.repeat(n) + '☆'.repeat(5 - n); }
+function cell(text, cls) { const td = document.createElement('td'); td.textContent = text; if (cls) td.className = cls; return td; }
+
+async function load() {
+  const params = new URLSearchParams();
+  const q = $('q').value.trim(); if (q) params.set('q', q);
+  if ($('category').value) params.set('category', $('category').value);
+  params.set('sort', $('sort').value);
+  if ($('min').value) params.set('min', $('min').value);
+  if ($('max').value) params.set('max', $('max').value);
+  params.set('page', state.page); params.set('size', 15);
+  const ticket = ++pending;
+  const res = await fetch('/api/products?' + params);
+  if (ticket !== pending) return;
+  const data = await res.json();
+  if (!res.ok) { $('summary').textContent = data.detail; $('rows').replaceChildren(); return; }
+  const timing = (res.headers.get('server-timing') || '').match(/dur=([\d.]+)/);
+  state.pages = Math.max(1, data['الصفحات']);
+  $('summary').innerHTML = `<b class="num">${fmt.format(data['الإجمالي'])}</b> منتج مطابق` +
+    (timing ? ` · بحث في <b class="num">${timing[1]}</b> مث على الخادم` : '');
+  $('rows').replaceChildren(...data['المنتجات'].map((p) => {
+    const tr = document.createElement('tr');
+    tr.append(
+      cell(p['الرقم'], 'n num dim'), cell(p['الاسم'], 'name'), cell(p['الفئة'], 'dim'), cell(p['العلامة']),
+      cell(stars(p['التقييم']), 'stars'), cell(fmt.format(p['السعر']) + ' ر.س', 'n num'),
+      cell(p['المخزون'] === 0 ? 'نفد' : fmt.format(p['المخزون']), 'n num' + (p['المخزون'] === 0 ? ' out' : ' dim')),
+    );
+    return tr;
+  }));
+  $('page-label').textContent = `الصفحة ${fmt.format(state.page)} من ${fmt.format(state.pages)}`;
+  $('prev').disabled = state.page <= 1; $('next').disabled = state.page >= state.pages;
+}
+
+let debounce;
+$('filters').addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(() => { state.page = 1; load(); }, 120); });
+$('filters').addEventListener('submit', (e) => e.preventDefault());
+$('prev').onclick = () => { state.page--; load(); };
+$('next').onclick = () => { state.page++; load(); };
+
+fetch('/api/categories').then((r) => r.json()).then((d) => {
+  $('total').textContent = fmt.format(d['المنتجات']);
+  for (const c of d['الفئات']) {
+    const o = document.createElement('option');
+    o.value = c['الاسم']; o.textContent = `${c['الاسم']} (${fmt.format(c['العدد'])})`;
+    $('category').append(o);
+  }
+});
+load();
+
+// ———————— اختبار الحمل ————————
+const series = [];
+let last = null;
+
+function ms(us) { return us === 0 ? '–' : (us < 1000 ? (us / 1000).toFixed(2) : (us / 1000).toFixed(1)) + ' مث'; }
+
+function draw() {
+  const max = Math.max(1, ...series);
+  const n = Math.max(2, series.length);
+  const pts = series.map((v, i) => `${(i / (n - 1) * 100).toFixed(2)},${(100 - v / max * 92).toFixed(2)}`);
+  if (pts.length < 2) { $('line').setAttribute('d', ''); $('area').setAttribute('d', ''); $('peak').textContent = ''; return; }
+  $('line').setAttribute('d', 'M' + pts.join(' L'));
+  $('area').setAttribute('d', `M0,100 L${pts.join(' L')} L${((series.length - 1) / (n - 1) * 100).toFixed(2)},100 Z`);
+  $('peak').textContent = 'الأعلى: ' + fmt.format(max);
+}
+
+function show(r) {
+  const running = r['الحالة'] === 'running';
+  $('start').disabled = running;
+  $('start').textContent = running ? 'يجري…' : 'ابدأ الاختبار';
+  $('m-total').textContent = fmt.format(r['الطلبات']);
+  $('m-p50').textContent = ms(r['الوسيط_بالمكرو']);
+  $('m-p99').textContent = ms(r['ص99_بالمكرو']);
+  $('m-errors').textContent = `${fmt.format(r['الردود_الخاطئة'])} / ${fmt.format(r['أخطاء_الشبكة'])}`;
+  const total = r['الثواني'] * 1000;
+  $('progress').style.width = r['الحالة'] === 'idle' ? '0' : Math.min(100, r['المنقضي_بالمللي'] / total * 100) + '%';
+  if (running) {
+    // الطلبات في الثانية في آخر ربع ثانية، من فرق تقريرين.
+    if (last && r['المنقضي_بالمللي'] > last['المنقضي_بالمللي']) {
+      const rate = (r['الطلبات'] - last['الطلبات']) / ((r['المنقضي_بالمللي'] - last['المنقضي_بالمللي']) / 1000);
+      series.push(Math.round(rate)); draw();
+      $('m-rate').textContent = fmt.format(Math.round(rate));
+    }
+    last = r;
+  } else if (r['الحالة'] === 'done') {
+    $('m-rate').textContent = fmt.format(r['في_الثانية']);
+    if (last) {
+      const opened = r['الاتصالات_المفتوحة'], asked = r['الاتصالات'];
+      $('result').innerHTML = `<b class="num">${fmt.format(r['الطلبات'])}</b> رد صحيح في ${r['الثواني']} ثوان:` +
+        ` <b class="num">${fmt.format(r['في_الثانية'])}</b> طلب في الثانية، والوسيط ${ms(r['الوسيط_بالمكرو'])}، وp99 ${ms(r['ص99_بالمكرو'])}.` +
+        ` فتح ${opened} من ${asked} اتصالا` + (opened < asked ? ' <b class="bad">(أقل من المطلوب)</b>' : '') +
+        `، وطابق كل رد صحيح الجسم المتوقع بايتا ببايت.`;
+    }
+    last = null;
+  }
+}
+
+new EventSource('/api/load-test/events').addEventListener('report', (e) => show(JSON.parse(e.data)));
+
+function scenario() { return document.querySelector('input[name=scenario]:checked').value; }
+function showNote() { $('scenario-note').innerHTML = notes[scenario()]; }
+$('scenarios').addEventListener('change', showNote); showNote();
+
+$('start').onclick = async () => {
+  series.length = 0; draw(); last = null; $('result').textContent = ''; $('m-rate').textContent = '0';
+  const res = await fetch('/api/load-test', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ 'السيناريو': scenario(), 'الاتصالات': Number($('connections').value), 'الثواني': Number($('seconds').value) }),
+  });
+  const data = await res.json();
+  if (!res.ok) { $('result').textContent = data.detail; return; }
+  last = data; show(data);
+};
+</script>
+</body>
+</html>

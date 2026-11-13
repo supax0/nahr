@@ -1,0 +1,387 @@
+// A full site served by Nahr: HTML templates, static CSS and JavaScript, and
+// a JSON API.
+//
+//   /            the page in Arabic     /en          in English
+//   POST /notes  a form that adds a note, then redirects (Post/Redirect/Get)
+//   GET  /api/status   POST /api/like   called by app.js
+//   /static/*    style.css, app.js, favicon.svg
+//   anything else  a 404 page from the 404.html template
+//
+// The templates and files are in nahr/examples/site, shared with the Arabic
+// example. From the folder that holds nahr and sultanc:
+//
+//     (cd sultanc && ./build/sultanc "$OLDPWD/nahr/examples/en/site.sn" --package-graph "$OLDPWD/nahr/examples/package-graph.toml" -o "$OLDPWD/site_en")
+//     ./site_en                      # http://127.0.0.1:8000
+//
+// Environment: NAHR_SITE (the site folder), NAHR_PORT, NAHR_RELOAD=1 to read
+// the templates again on every request while developing, NAHR_SERIAL=1 for
+// one thread (the interpreter).
+from std.text import texts_equal, join, trim, strip_prefix;
+from std.env import get_environment_variable;
+from std.io import println;
+from std.sync import
+    atomic_u64, atomic_u64_new, atomic_u64_load, atomic_u64_fetch_add, memory_ordering,
+    mutex, mutex_new, with_lock;
+from std.time import monotonic_time_ns;
+from std.http import http_request, http_response;
+from nahr.routing import
+    router, new_router, get, post, layer, middleware,
+    serve_dir_with, static_config, default_static_config, routing_error;
+from nahr.handler import request, from_fn;
+from nahr.extract import path_params;
+from nahr.response import response;
+from nahr.body import text_response, redirect;
+from nahr.form import form, form_field;
+from nahr.json import
+    json_writer, new_json_writer, json_begin_object, json_end_object, json_key, json_uint,
+    json_writer_response;
+from nahr.middleware import map_errors, error_response_mapper, compression;
+from nahr.template import
+    templates, load_templates, template_response, template_response_with_status, template_error_text,
+    template_context, template_value, template_field, set_value, field,
+    text_value, int_value, list_value, object_value;
+from nahr.serve import serve_on, serve_on_parallel;
+
+type note = { id: uint, text: string };
+
+// Every server thread shares this: the counters are atomic, the notes are
+// behind a mutex.
+type site_state = {
+    templates: templates,
+    started: int,
+    visits: atomic_u64,
+    likes: atomic_u64,
+    notes: mutex<vector note>
+};
+
+def now(): int {
+    match monotonic_time_ns() with
+    | result.ok(value) -> { return value; }
+    | result.err(_) -> { return 0; };
+}
+
+def env_or(name: string, fallback: string): string {
+    match get_environment_variable(&name) with
+    | result.ok(option.some(value)) -> { return value; }
+    | _ -> { return fallback; };
+}
+
+def concat(a: string, b: string): string {
+    let parts: vector string = [a, b];
+    let none: string = "";
+    return join(&parts, &none);
+}
+
+def equals(text: &string, other: string): bool { return texts_equal(text, &other); }
+
+def starts(text: &string, prefix: string): bool {
+    match strip_prefix(text, &prefix) with
+    | option.some(_) -> { return true; }
+    | option.none -> { return false; };
+}
+
+// ---- translation: the same templates for both languages, texts from here ----
+
+def page_texts(english: bool): template_value {
+    if (english) {
+        let fields: vector template_field = [
+            field("site", text_value("Nahr")),
+            field("switch", text_value("العربية")),
+            field("title", text_value("A web framework for SultanC")),
+            field("tagline", text_value("This page is a template rendered by Nahr; the styles and script are static files it serves.")),
+            field("features_title", text_value("What this page uses")),
+            field("live_title", text_value("Live from the server")),
+            field("visits", text_value("Page views")),
+            field("uptime", text_value("Uptime")),
+            field("likes", text_value("Likes")),
+            field("like", text_value("Like")),
+            field("notes_title", text_value("Notes")),
+            field("placeholder", text_value("Write a note")),
+            field("add", text_value("Add")),
+            field("empty", text_value("No notes yet.")),
+            field("escape_hint", text_value("Try a note with <b>HTML</b>: templates escape it.")),
+            field("not_found", text_value("This page does not exist.")),
+            field("back", text_value("Back to the home page")),
+            field("footer", text_value("Served by Nahr, written in SultanC."))
+        ];
+        return object_value(fields);
+    };
+    let fields: vector template_field = [
+        field("site", text_value("نهر")),
+        field("switch", text_value("English")),
+        field("title", text_value("إطار ويب للغة سلطان سي")),
+        field("tagline", text_value("هذه الصفحة قالب يعرضه نهر، والتنسيق والسكربت ملفات ثابتة يخدمها هو أيضا.")),
+        field("features_title", text_value("ما تستخدمه هذه الصفحة")),
+        field("live_title", text_value("مباشرة من الخادم")),
+        field("visits", text_value("المشاهدات")),
+        field("uptime", text_value("مدة التشغيل")),
+        field("likes", text_value("الإعجابات")),
+        field("like", text_value("أعجبني")),
+        field("notes_title", text_value("الملاحظات")),
+        field("placeholder", text_value("اكتب ملاحظة")),
+        field("add", text_value("أضف")),
+        field("empty", text_value("لا ملاحظات بعد.")),
+        field("escape_hint", text_value("جرّب ملاحظة فيها <b>HTML</b>: القوالب تهرّبها.")),
+        field("not_found", text_value("هذه الصفحة غير موجودة.")),
+        field("back", text_value("العودة إلى الصفحة الرئيسية")),
+        field("footer", text_value("يخدمها نهر، المكتوب بسلطان سي."))
+    ];
+    return object_value(fields);
+}
+
+def feature(title: string, text: string): template_value {
+    let fields: vector template_field = [field("title", text_value(title)), field("text", text_value(text))];
+    return object_value(fields);
+}
+
+def features(english: bool): template_value {
+    if (english) {
+        let items: vector template_value = [
+            feature("Templates", "Jinja syntax: extends, blocks, include, for and if, with HTML escaping"),
+            feature("Static files", "ETag and 304, charset, Cache-Control, precompressed .br/.gz"),
+            feature("Forms", "the notes form posts, then redirects (Post/Redirect/Get)"),
+            feature("JSON API", "app.js calls /api/status and /api/like"),
+            feature("Middleware", "gzip compression and a template 404 page")
+        ];
+        return list_value(items);
+    };
+    let items: vector template_value = [
+        feature("القوالب", "صياغة Jinja: الوراثة والكتل والتضمين والحلقات والشروط مع هروب HTML"),
+        feature("الملفات الثابتة", "ETag و 304 وترميز المحارف و Cache-Control وملفات br و gz المضغوطة مسبقا"),
+        feature("النماذج", "نموذج الملاحظات يرسل ثم يعيد التوجيه (Post/Redirect/Get)"),
+        feature("واجهة JSON", "يستدعي app.js المسارين api/status و api/like"),
+        feature("الوسطاء", "ضغط gzip وصفحة 404 من قالب")
+    ];
+    return list_value(items);
+}
+
+// The language, its direction, the link to the other language, and the texts.
+def language_context(english: bool): template_context {
+    let context: mutable template_context = [];
+    if (english) {
+        set_value(&mutable context, "lang", text_value("en"));
+        set_value(&mutable context, "dir", text_value("ltr"));
+        set_value(&mutable context, "home", text_value("/en"));
+        set_value(&mutable context, "other_url", text_value("/"));
+        set_value(&mutable context, "other_lang", text_value("ar"));
+    } else {
+        set_value(&mutable context, "lang", text_value("ar"));
+        set_value(&mutable context, "dir", text_value("rtl"));
+        set_value(&mutable context, "home", text_value("/"));
+        set_value(&mutable context, "other_url", text_value("/en"));
+        set_value(&mutable context, "other_lang", text_value("en"));
+    };
+    set_value(&mutable context, "t", page_texts(english));
+    return context;
+}
+
+// ---- pages ----
+
+def note_value(item: &note): template_value {
+    let fields: vector template_field = [
+        field("id", int_value((*item).id as int)),
+        field("text", text_value(clone(&(*item).text)))
+    ];
+    return object_value(fields);
+}
+
+// Newest first.
+def notes_value(state: &site_state): template_value {
+    let copy: vector note = with_lock(
+        &(*state).notes,
+        fn(items: &mutable vector note): vector note -> clone(items)
+    );
+    let values: mutable vector template_value = [];
+    let i: mutable uint = length(copy) as uint;
+    while (i > 0) {
+        i := i - 1;
+        append(values, note_value(&copy[i]));
+    }
+    return list_value(values);
+}
+
+def page(state: &site_state, english: bool): response {
+    let visits: u64 = atomic_u64_fetch_add(&(*state).visits, 1 as u64, memory_ordering.relaxed()) + 1;
+    let likes: u64 = atomic_u64_load(&(*state).likes, memory_ordering.relaxed());
+    let context: mutable template_context = language_context(english);
+    set_value(&mutable context, "features", features(english));
+    set_value(&mutable context, "visits", int_value(visits as int));
+    set_value(&mutable context, "likes", int_value(likes as int));
+    set_value(&mutable context, "notes", notes_value(state));
+    return template_response(&(*state).templates, "index.html", &context);
+}
+
+def arabic(state: &site_state, req: &request, params: &path_params): response {
+    return page(state, false);
+}
+
+def english(state: &site_state, req: &request, params: &path_params): response {
+    return page(state, true);
+}
+
+def form_value(fields: &vector form_field, name: string): string {
+    let i: mutable uint = 0;
+    while (i < (length(*fields) as uint)) {
+        if (texts_equal(&(*fields)[i].الاسم, &name)) { return clone(&(*fields)[i].القيمة); };
+        i := i + 1;
+    }
+    return "";
+}
+
+// Keeps the newest 50 notes.
+def add_note(items: &mutable vector note, text: string): uint {
+    let id: mutable uint = 1;
+    let count: uint = length(*items) as uint;
+    if (count > 0) { id := (*items)[count - 1].id + 1; };
+    let item: note = { id: id, text: text };
+    append(*items, item);
+    if (length(*items) > 50) {
+        let kept: mutable vector note = [];
+        let i: mutable uint = (length(*items) as uint) - 50;
+        while (i < (length(*items) as uint)) { append(kept, clone(&(*items)[i])); i := i + 1; }
+        *items := kept;
+    };
+    return id;
+}
+
+// POST /notes, then 303 back to the page in the same language.
+def add_from_form(state: &site_state, req: &request, params: &path_params): response {
+    let target: mutable string = "/";
+    match form(req) with
+    | result.err(_) -> { let body: string = "Bad Request"; return text_response(400, &body); }
+    | result.ok(fields) -> {
+        let lang: string = form_value(&fields, "lang");
+        if (equals(&lang, "en")) { target := "/en"; };
+        let raw: string = form_value(&fields, "text");
+        let text: string = trim(&raw);
+        if (length(text) > 0 && length(text) <= 1200) {
+            let ignored: uint = with_lock(
+                &(*state).notes,
+                fn(items: &mutable vector note): uint -> add_note(items, clone(&text))
+            );
+        };
+    };
+    match redirect(303, &target) with
+    | option.some(reply) -> { return reply; }
+    | option.none -> { let body: string = ""; return text_response(500, &body); };
+}
+
+// ---- JSON API ----
+
+// GET /api/status
+def status(state: &site_state, req: &request, params: &path_params): response {
+    let count: uint = with_lock(
+        &(*state).notes,
+        fn(items: &mutable vector note): uint -> length(*items) as uint
+    );
+    let writer: mutable json_writer = new_json_writer();
+    json_begin_object(&mutable writer);
+    let k1: string = "uptime_seconds";
+    json_key(&mutable writer, &k1);
+    json_uint(&mutable writer, ((now() - (*state).started) / 1000000000) as uint);
+    let k2: string = "visits";
+    json_key(&mutable writer, &k2);
+    json_uint(&mutable writer, atomic_u64_load(&(*state).visits, memory_ordering.relaxed()) as uint);
+    let k3: string = "likes";
+    json_key(&mutable writer, &k3);
+    json_uint(&mutable writer, atomic_u64_load(&(*state).likes, memory_ordering.relaxed()) as uint);
+    let k4: string = "notes";
+    json_key(&mutable writer, &k4);
+    json_uint(&mutable writer, count);
+    json_end_object(&mutable writer);
+    return json_writer_response(200, &writer);
+}
+
+// POST /api/like
+def like(state: &site_state, req: &request, params: &path_params): response {
+    let likes: u64 = atomic_u64_fetch_add(&(*state).likes, 1 as u64, memory_ordering.relaxed()) + 1;
+    let writer: mutable json_writer = new_json_writer();
+    json_begin_object(&mutable writer);
+    let key: string = "likes";
+    json_key(&mutable writer, &key);
+    json_uint(&mutable writer, likes as uint);
+    json_end_object(&mutable writer);
+    return json_writer_response(200, &writer);
+}
+
+// A 404 page from the template for site pages; /api errors and every other
+// response pass unchanged.
+def error_page(
+    state: &site_state,
+    req: &http_request<vector u8>,
+    reply: http_response<vector u8>
+): http_response<vector u8> {
+    if (reply.الحالة != 404 || starts(&(*req).الهدف, "/api/")) { return reply; };
+    let english: bool = starts(&(*req).الهدف, "/en");
+    let context: template_context = language_context(english);
+    return template_response_with_status(404, &(*state).templates, "404.html", &context);
+}
+
+def registered(outcome: result uint, routing_error): bool {
+    match outcome with
+    | result.ok(_) -> { return true; }
+    | result.err(_) -> { return false; };
+}
+
+def main(): int {
+    let site: string = env_or("NAHR_SITE", "nahr/examples/site");
+    let port: string = env_or("NAHR_PORT", "8000");
+    let template_dir: string = concat(clone(&site), "/templates");
+    let public_dir: string = concat(clone(&site), "/public");
+
+    let loaded: mutable templates;
+    match load_templates(template_dir) with
+    | result.ok(value) -> { loaded := value; }
+    | result.err(error) -> {
+        let ignored: result int, int = println(template_error_text(&error));
+        return 1;
+    };
+    let reload: string = env_or("NAHR_RELOAD", "");
+    loaded.إعادة_التحميل := equals(&reload, "1");
+
+    let notes: vector note = [];
+    let state: site_state = {
+        templates: loaded,
+        started: now(),
+        visits: atomic_u64_new(0 as u64),
+        likes: atomic_u64_new(0 as u64),
+        notes: mutex_new(notes)
+    };
+    let app: mutable router<site_state> = new_router(state);
+
+    let root: string = "/";
+    let en: string = "/en";
+    let notes_path: string = "/notes";
+    let status_path: string = "/api/status";
+    let like_path: string = "/api/like";
+    let static_path: string = "/static";
+    if (!registered(get(&mutable app, &root, from_fn(arabic)))) { return 2; };
+    if (!registered(get(&mutable app, &en, from_fn(english)))) { return 3; };
+    if (!registered(post(&mutable app, &notes_path, from_fn(add_from_form)))) { return 4; };
+    if (!registered(get(&mutable app, &status_path, from_fn(status)))) { return 5; };
+    if (!registered(post(&mutable app, &like_path, from_fn(like)))) { return 6; };
+
+    // Static files stay in the browser cache for an hour.
+    let config: mutable static_config = default_static_config();
+    config.التخزين := "public, max-age=3600";
+    config.مضغوطة := true;
+    if (!registered(serve_dir_with(&mutable app, &static_path, &public_dir, &config))) { return 7; };
+
+    let mapper: error_response_mapper<site_state> = error_page;
+    let errors: middleware<site_state> = map_errors(mapper);
+    let gzip: middleware<site_state> = compression(1024);
+    layer(&mutable app, errors);
+    layer(&mutable app, gzip);
+
+    let address: string = concat("127.0.0.1:", port);
+    let serial: string = env_or("NAHR_SERIAL", "");
+    if (equals(&serial, "1")) {
+        match serve_on(&address, &app) with
+        | result.err(_) -> { return 8; }
+        | result.ok(code) -> { return code; };
+    };
+    let ready: router<site_state> = app;
+    match serve_on_parallel(&address, ready, 0) with
+    | result.err(_) -> { return 9; }
+    | result.ok(code) -> { return code; };
+}

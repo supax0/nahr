@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+  <h1>{{ t.title }}</h1>
+  <p class="lead">{{ t.tagline }}</p>
+</section>
+
+<section>
+  <h2>{{ t.features_title }}</h2>
+  <ul class="features">
+    {%- for f in features %}
+    <li><strong>{{ f.title }}</strong><span>{{ f.text }}</span></li>
+    {%- endfor %}
+  </ul>
+</section>
+
+<section class="live">
+  <h2>{{ t.live_title }}</h2>
+  <dl>
+    <div><dt>{{ t.visits }}</dt><dd id="visits">{{ visits }}</dd></div>
+    <div><dt>{{ t.uptime }}</dt><dd id="uptime">–</dd></div>
+    <div><dt>{{ t.likes }}</dt><dd id="likes">{{ likes }}</dd></div>
+  </dl>
+  <button type="button" id="like">{{ t.like }}</button>
+</section>
+
+<section>
+  <h2>{{ t.notes_title }} <small>{{ notes|length }}</small></h2>
+  <form method="post" action="/notes" class="note-form">
+    <input type="hidden" name="lang" value="{{ lang }}">
+    <input name="text" maxlength="280" required autocomplete="off" placeholder="{{ t.placeholder }}" aria-label="{{ t.placeholder }}">
+    <button type="submit">{{ t.add }}</button>
+  </form>
+  <ol class="notes">
+    {%- for note in notes %}
+    {% include "partials/note.html" %}
+    {%- else %}
+    <li class="empty">{{ t.empty }}</li>
+    {%- endfor %}
+  </ol>
+  <p class="hint">{{ t.escape_hint }}</p>
+</section>
+{% endblock %}
