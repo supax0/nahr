@@ -45,15 +45,20 @@ echo "Nahr store benchmark  $(date)  host=$(uname -sm)  cpus=$cpus"
 echo "  duration=${DURATION}s warmup=${WARMUP}s connections=[$CONNECTIONS] load-threads=$LOAD_THREADS server-workers=$WORKERS"
 
 echo "building..."
-(cd "$SULTANC_ROOT" && "$compiler" "$nahr_dir/examples/ar/store.sn" --package-graph "$nahr_dir/examples/package-graph.toml" -b llvm -o "$out/bin/store") > "$out/build.log" 2>&1 \
+(cd "$SULTANC_ROOT" && "$compiler" "$nahr_dir/examples/ar/store.sn" --package-graph "$nahr_dir/examples/package-graph.toml" -b llvm -O2 -o "$out/bin/store") > "$out/build.log" 2>&1 \
     || { cat "$out/build.log"; exit 1; }
 cc -O2 -pthread -o "$out/bin/nahr_load" "$bench_dir/load.c" >> "$out/build.log" 2>&1 || { cat "$out/build.log"; exit 1; }
 
+# Runs the command in place of the shell (exec), so the PID of `pin ... &`
+# is the program's own and the trap below stops the program itself.
 pin() { # $1 cpu list, rest: command
     local cpu_list=$1; shift
-    if [ -n "$cpu_list" ] && command -v taskset >/dev/null 2>&1; then taskset -c "$cpu_list" "$@"; else "$@"; fi
+    if [ -n "$cpu_list" ] && command -v taskset >/dev/null 2>&1; then exec taskset -c "$cpu_list" "$@"; else exec "$@"; fi
 }
 
+if curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then
+    echo "port $PORT is already in use; stop that server or set PORT"; exit 1
+fi
 NAHR_PORT=$PORT NAHR_ACCESS_LOG=0 NO_COLOR=1 NAHR_WORKERS=$WORKERS \
     pin "${SERVER_CPUS:-}" "$out/bin/store" > "$out/server.log" 2>&1 &
 server=$!

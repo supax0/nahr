@@ -12,7 +12,7 @@ layer on top.
 
 > **Status:** early development (`0.1.0-dev`). The API may still change.
 > Nahr follows SultanC's main branch and needs a SultanC tree from
-> 2026-11-12 or later.
+> 2026-11-24 or later (the `ليكن` keyword).
 
 ## Contents
 
@@ -25,6 +25,7 @@ layer on top.
 - [Project layout](#project-layout)
 - [Documentation](#documentation)
 - [Known limitations](#known-limitations)
+- [License](#license)
 
 ## Features
 
@@ -77,17 +78,17 @@ A complete application, in either language:
 
 عرف الصفحة_الأولى(الحالة: &عدد, الطلب: &طلب,
                   المعاملات: &معاملات_مسار): استجابة {
-    دع النص: نص = «أهلا من نهر»;
+    ليكن النص: نص = «أهلا من نهر»;
     أرجع رد_نصي(200, &النص);
 }
 
 عرف الرئيسية(): عدد {
-    دع الموجه: متغير موجه<عدد> = أنشئ_موجها(0);
-    دع المسار: نص = «/»;
+    ليكن الموجه: متغير موجه<عدد> = أنشئ_موجها(0);
+    ليكن المسار: نص = «/»;
     طابق جلب(&متغير الموجه, &المسار, من_دالة(الصفحة_الأولى)) مع
     | نتيجة.خطأ(_) -> { أرجع 1; }
     | نتيجة.نجح(_) -> { };
-    دع العنوان: نص = «127.0.0.1:8000»;
+    ليكن العنوان: نص = «127.0.0.1:8000»;
     طابق شغل_على(&العنوان, &الموجه) مع
     | نتيجة.خطأ(_) -> { أرجع 2; }
     | نتيجة.نجح(الرمز) -> { أرجع الرمز; };
@@ -170,7 +171,7 @@ expected body.
 
 ```bash
 (cd sultanc && ./build/sultanc "$OLDPWD/nahr/examples/ar/store.sn" \
-    --package-graph "$OLDPWD/nahr/examples/package-graph.toml" -b llvm -o "$OLDPWD/store")
+    --package-graph "$OLDPWD/nahr/examples/package-graph.toml" -b llvm -O2 -o "$OLDPWD/store")
 ./store                 # http://127.0.0.1:8000
 ```
 
@@ -197,8 +198,9 @@ same body checks, and reports how many connections were actually established.
 | `ar/demo.sn` | a chat room and a live server dashboard in one binary |
 | `ar/store.sn` | the showcase above |
 
-Each file starts with the command that builds it. Use `-b llvm` for optimized
-builds.
+Each file starts with the command that builds it. SultanC optimizes only
+when asked: add `-O2`, and `-b llvm` for the LLVM backend, to any build you
+measure or deploy.
 
 ## Performance
 
@@ -246,7 +248,6 @@ function. The script then builds all ten examples.
 A failure names the test, the location and the check that failed:
 
 ```text
-نجح التوجيه
 فشل المسارات_المزخرفة: أرجع خطأ
     --> tests/decorated_routes.sn:43:5
     لم يتحقق: عدد_المسارات_المزخرفة() != 3
@@ -282,5 +283,7 @@ nahr/
   SultanC's standard library supports IOCP.
 - A handler that blocks holds its event-loop worker; start more workers than
   cores when handlers wait on I/O.
-- `sultanc test` does not yet run definition-time decorators (`@@`), so the
-  decorated-routes test fails under it while the feature works in programs.
+
+## License
+
+Nahr is released under the [MIT License](LICENSE).

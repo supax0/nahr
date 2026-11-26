@@ -3,7 +3,7 @@
 // requests on one thread and prints ns/request, requests/ms, and the
 // allocations and requested bytes per request (std's per-thread counters).
 //
-//   (cd sultanc && ./build/sultanc "$OLDPWD/nahr/bench/inprocess.sn" -o "$OLDPWD/nahr_inprocess")
+//   (cd sultanc && ./build/sultanc "$OLDPWD/nahr/bench/inprocess.sn" --package-graph "$OLDPWD/nahr/bench/package-graph.toml" -b llvm -O2 -o "$OLDPWD/nahr_inprocess")
 //   ./nahr_inprocess
 from std.io import println;
 from std.text import join, uint_to_text, repeat_text;

@@ -56,10 +56,10 @@ echo "Nahr benchmark  $(date)  host=$(uname -sm)  cpus=$cpus"
 echo "  duration=${DURATION}s warmup=${WARMUP}s connections=[$CONNECTIONS] load-threads=$LOAD_THREADS workers=$WORKERS backend=$BACKEND"
 
 echo "building..."
-(cd "$SULTANC_ROOT" && "$compiler" "$bench_dir/server.sn" --package-graph "$bench_dir/package-graph.toml" -b "$BACKEND" -o "$bin/server") > "$out/build.log" 2>&1 || { cat "$out/build.log"; exit 1; }
-(cd "$SULTANC_ROOT" && "$compiler" "$bench_dir/inprocess.sn" --package-graph "$bench_dir/package-graph.toml" -b "$BACKEND" -o "$bin/inprocess") >> "$out/build.log" 2>&1 || { cat "$out/build.log"; exit 1; }
+(cd "$SULTANC_ROOT" && "$compiler" "$bench_dir/server.sn" --package-graph "$bench_dir/package-graph.toml" -b "$BACKEND" -O2 -o "$bin/server") > "$out/build.log" 2>&1 || { cat "$out/build.log"; exit 1; }
+(cd "$SULTANC_ROOT" && "$compiler" "$bench_dir/inprocess.sn" --package-graph "$bench_dir/package-graph.toml" -b "$BACKEND" -O2 -o "$bin/inprocess") >> "$out/build.log" 2>&1 || { cat "$out/build.log"; exit 1; }
 case " ${MODES:-} " in *" std "*)
-    (cd "$SULTANC_ROOT" && "$compiler" "$bench_dir/std_server.sn" --package-graph "$bench_dir/package-graph.toml" -b "$BACKEND" -o "$bin/std_server") >> "$out/build.log" 2>&1 || { cat "$out/build.log"; exit 1; } ;;
+    (cd "$SULTANC_ROOT" && "$compiler" "$bench_dir/std_server.sn" --package-graph "$bench_dir/package-graph.toml" -b "$BACKEND" -O2 -o "$bin/std_server") >> "$out/build.log" 2>&1 || { cat "$out/build.log"; exit 1; } ;;
 esac
 # Other frameworks (bench/compare): each answers GET /plain with "ok".
 # A mode whose toolchain is missing is skipped with a note.
@@ -116,6 +116,8 @@ echo "mode,middleware,method,path,connections,seconds,requests,req_per_s,req_per
 server_pid=""
 start_server() {
     # $1 = serial|pool  $2 = 0|1 (middleware)
+    # A fresh port per start, skipping one another program already holds.
+    while curl -s -o /dev/null "http://127.0.0.1:$next_port/" 2>/dev/null; do next_port=$((next_port + 1)); done
     PORT=$next_port; next_port=$((next_port + 1))
     serial=0; [ "$1" = serial ] && serial=1
     evented=0; [ "$1" = evented ] && evented=1
@@ -140,7 +142,8 @@ start_server() {
     server_pid=$!
     i=0
     while [ $i -lt 100 ]; do
-        if curl -s -o /dev/null "http://127.0.0.1:$PORT/plain" 2>/dev/null; then return 0; fi
+        # -f: a 2xx from /plain, so another program on the port does not count.
+        if curl -sf -o /dev/null "http://127.0.0.1:$PORT/plain" 2>/dev/null; then return 0; fi
         if ! kill -0 "$server_pid" 2>/dev/null; then
             wait "$server_pid"; status=$?
             server_pid=""

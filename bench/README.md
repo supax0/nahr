@@ -37,7 +37,7 @@ Settings are environment variables:
 | `ENDPOINTS` | all | `plain json params echo large sleep cpu alloc` |
 | `PORT` | 8090 | |
 | `MODES` | `serial pool evented` | add `axum actix go gin fastapi node` for the same `/plain` in other frameworks (`compare/README.md`), add `std` for std's event-driven server with no Nahr code (`std_server.sn`, `/plain` only): if `std` slows down the same way as `evented`, the cause is in std, not Nahr |
-| `BACKEND` | native | `native` or `llvm` (the compiler must be built with `--enable-llvm`) |
+| `BACKEND` | native | `native` or `llvm` (the compiler must be built with `--enable-llvm`); every Nahr server is built with `-O2` |
 
 ## Endpoints
 

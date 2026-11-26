@@ -217,6 +217,132 @@ Found with nahr12 (std), from the Mac benchmark against axum (same machine,
 same load tool, `/plain`, 32 connections): axum 264 req/ms, std's server
 alone 64, Nahr 57. At 2 connections all three are equal (92-95).
 
+Checked on the 2026-11-25 13bcb36 (text slices and views) tree:
+
+- Fixed: 44. `./build.sh --enable-llvm` builds from a fresh checkout: it now
+  passes the host target (`--target=x86_64-linux`) to the seed's Stage1.
+- All 17 tests pass, compiled and with `--interpret`; the 10 examples build
+  with no warnings. No renames: `--check` finds 0 old spellings for every
+  wave.
+- At `-O2`, in-process time and the store benchmark match the previous tree
+  (alternating runs on one machine); every store response has the expected
+  body. `GET /plain` allocates 167 bytes per request (10 allocations).
+
+Checked on the 2026-11-25 patterns tree:
+
+- All 17 tests pass, compiled and with `--interpret`; the 10 examples build
+  with no warnings. No renames this time: `rename_tokens.py --check` finds 0
+  old spellings for every wave.
+- The compiler builds without `-O` at `-O0` now (`docs/en/reference/
+  command-line.md`, "Optimization levels"), as rustc and cc do. Nahr's
+  benchmark scripts and the build commands for measured or deployed programs
+  pass `-O2`; without it `GET /plain` took 3,000 ns in-process instead of
+  about 400. At `-O2` this tree and final12 run at the same speed, in-process
+  and in the store benchmark (alternating runs on one machine).
+- 44. **`./build.sh` does not build from a fresh checkout.** The build
+  driver (`tools/build/main.sn`) is compiled by Stage1 without `--target`,
+  and Stage1, translated from the wasm seed, defaults to `wasm32-wasi`
+  (`def main(): int { return 0; }` comes out as a WebAssembly module). The
+  driver now uses `انتظر_عملية_بمهلة` and `اقتل_عملية`, which std does not
+  declare for `wasm32-wasi`, so it fails with
+  SULTANC-TARGET-FEATURE-UNSUPPORTED and `build.sh` stops with "the build
+  driver (tools/build) does not build". A machine with `build/sultanc`
+  already built uses that compiler and does not see it. Workaround:
+  `./build.sh --with=<a previous sultanc>`, then `./build.sh --rebuild`.
+- Fixed in Nahr: `bench/store.sh` started the store through a shell
+  function, so its exit trap stopped the function's subshell and left the
+  store running on the port. The function now `exec`s the program, and the
+  script refuses a port that already answers. `bench/run.sh` accepted any
+  answer on `/plain` as its server having started (a 404 from another
+  program counted), and now needs a 2xx and skips a port that is already
+  held. Because of the first bug, the final12 store comparison below may
+  have measured a store left from an earlier run; the comparison above was
+  redone with the fixed script.
+
+Ported to the 2026-11-24 final12 tree:
+
+- The Arabic `let` keyword is now `ليكن`. `دع` was removed with no alias, so
+  every Nahr source failed to parse. The compiler's lexer-based tool rewrote
+  the 2,375 uses (`.sn` files and the code blocks of the Markdown files),
+  leaving strings and comments alone:
+  `python3 tools/rename/rename_tokens.py --wave 8 nahr`.
+- The other renames (`بينما` → `طالما`, `اختيار` → `اختياري`,
+  `اختيار.بعض` → `اختياري.موجود`, `غير_موقع` → `طبيعي`, `غN` → `طN`, the
+  entry function) were already done in Nahr: `--check` finds 0 old
+  spellings for every wave.
+- All 17 tests pass, compiled and with `--interpret`; the 10 examples build
+  with no warnings. The store benchmark answers every request with the
+  expected body; against the previous tree on the same machine, the
+  difference is within run-to-run noise.
+- `GET /plain` allocates 167 bytes per request (10 allocations), as on the
+  previous tree.
+
+Checked on the 2026-11-19 interp2 tree:
+
+- All 17 tests pass, compiled and with `--interpret`; the 10 examples build.
+  Nahr needs no change. The store benchmark answers every request with the
+  expected body.
+- 40, mostly fixed: a vector of elements up to 1 KiB now starts at 2
+  elements instead of 4 (`compiler/runtime/vector_memory_policy.sn`).
+  Requested bytes per request, same 10/21/31 allocations:
+
+  | Route | before | now |
+  |---|---|---|
+  | `GET /plain` | 295 | 167 |
+  | `GET /json` | 455 | 327 |
+  | `GET /params/7?q=a` | 744 | 456 |
+  | `GET /plain` + middleware | 731 | 507 |
+
+  The 119 of the earliest trees came with a starting capacity of 1, which
+  the compiler measured at 6-10% more build time; in-process time per request
+  is unchanged within noise.
+
+Checked on the 2026-11-19 interp1_ci tree:
+
+- All 17 tests pass, compiled and with `--interpret`; the 10 examples build.
+  Nahr needs no change.
+- Fixed: 43. The test-result check accepts `فشل` from
+  `library/alloc/error/failure.sn`.
+- The store benchmark answers every request with the expected body (product
+  83,018 req/s at 64 connections, on 2 CPUs).
+- Still open: 40. `GET /plain` allocates 295 bytes per request (10
+  allocations); in-process speed is unchanged from the previous tree on the
+  same machine.
+
+Checked on the 2026-11-16 static_env_core_moves tree (std split into core,
+alloc and std):
+
+- Nahr needs no change: the 10 examples build, and every `std.…` import
+  resolves through std's re-exports. The store benchmark answers every
+  request with the expected body (product 66,529 req/s at 64 connections,
+  on 2 CPUs).
+- 43. **`sultanc test` rejects every test that returns `نتيجة عدد, فشل`**
+  (SULTANC-TEST-RESULT-TYPE), on all 17 of Nahr's tests. The check
+  (`compiler/test_mode/validation.sn`, `رمز_هو_فشل_المكتبة`) looks for
+  `فشل` in a file ending `std/error/failure.sn`, and the file is now
+  `library/alloc/error/failure.sn`. With the suffix changed to
+  `alloc/error/failure.sn` in a scratch copy, all 17 tests pass, compiled
+  and with `--interpret`. The check would be safer by the module's identity
+  than by its file path.
+- Still open: 40. `GET /plain` allocates 295 bytes per request; `/json` is
+  455 (was 479).
+
+Checked on the 2026-11-13 000493c tree:
+
+- All 17 tests pass, compiled and in the interpreter; the 10 examples build.
+- Fixed: 42. `sultanc test` runs definition-time decorators before the
+  tests, so the decorated-routes test passes.
+- 41: std now has a regression test (`tcp_rebind`). It did not reproduce on
+  Linux on this tree or the previous one (the hello and store servers,
+  restarted on the same port right after load and after server-side
+  closes); it was seen on macOS. The benchmark keeps a fresh port per start
+  until it is confirmed there.
+- Still open: 40. `GET /plain` allocates 295 bytes per request (10
+  allocations), unchanged; with the middleware stack 731 (was 747).
+- New in the compiler: `@@track_caller`, so `assert` reports the line that
+  failed; `sultanc test --test` and `--tests-in`; tests run only for the
+  root package.
+
 Checked on the 2026-11-12 3b441bc (test-mode) tree:
 
 - The tests are `@@اختبار` functions now, run by `sultanc test` through
